@@ -1,0 +1,12 @@
+services:
+  csvtaggingai:
+    build: .
+    image: csvtaggingai:latest
+    container_name: csvtaggingai
+    restart: unless-stopped
+    env_file: .env
+    volumes:
+      - ./config:/app/config:ro
+      - ./data:/app/data
+    # To reload config without restart:
+    #   docker kill --signal=HUP csvtaggingai
