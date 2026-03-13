@@ -1,0 +1,52 @@
+[
+  {
+    "vmId": "vm-101",
+    "name": "web-server-01",
+    "powerState": "POWERED_ON",
+    "guestHostname": "web-server-01.corp.local",
+    "ipAddresses": ["10.0.1.10", "10.0.2.10"],
+    "tags": [
+      { "id": "tag-1", "name": "Production", "categoryId": "cat-1", "categoryName": "Environment" },
+      { "id": "tag-2", "name": "Web", "categoryId": "cat-2", "categoryName": "Role" }
+    ]
+  },
+  {
+    "vmId": "vm-102",
+    "name": "db-server-01",
+    "powerState": "POWERED_ON",
+    "guestHostname": "DB-SERVER-01.corp.local",
+    "ipAddresses": ["10.0.1.20"],
+    "tags": [
+      { "id": "tag-3", "name": "Production", "categoryId": "cat-1", "categoryName": "Environment" },
+      { "id": "tag-4", "name": "Database", "categoryId": "cat-2", "categoryName": "Role" }
+    ]
+  },
+  {
+    "vmId": "vm-103",
+    "name": "app-server-01",
+    "powerState": "POWERED_ON",
+    "guestHostname": null,
+    "ipAddresses": ["10.0.1.30"],
+    "tags": [
+      { "id": "tag-5", "name": "Staging", "categoryId": "cat-1", "categoryName": "Environment" }
+    ]
+  },
+  {
+    "vmId": "vm-104",
+    "name": "cache-server-01",
+    "powerState": "POWERED_OFF",
+    "guestHostname": "cache-server-01",
+    "ipAddresses": ["10.0.1.40", "10.0.3.40"],
+    "tags": [
+      { "id": "tag-6", "name": "Development", "categoryId": "cat-1", "categoryName": "Environment" }
+    ]
+  },
+  {
+    "vmId": "vm-105",
+    "name": "unmatched-vm",
+    "powerState": "POWERED_ON",
+    "guestHostname": "unmatched-vm.corp.local",
+    "ipAddresses": ["192.168.99.99"],
+    "tags": []
+  }
+]

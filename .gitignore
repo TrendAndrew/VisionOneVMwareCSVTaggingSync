@@ -1,0 +1,38 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+
+# Environment & secrets
+.env
+.env.*
+!.env.example
+
+# Runtime data (generated at runtime, not committed)
+data/
+
+# Logs
+*.log
+logs/
+
+# Coverage
+coverage/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# TypeScript incremental
+*.tsbuildinfo
+
+# Claude Flow / Hive Mind (local orchestration state)
+.claude-flow/
+.hive-mind/

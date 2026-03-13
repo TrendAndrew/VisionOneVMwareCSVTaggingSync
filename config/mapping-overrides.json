@@ -1,0 +1,5 @@
+{
+  "description": "Manual VM-to-Endpoint mapping overrides. These take precedence over automatic matching.",
+  "instructions": "Add entries to the 'overrides' array. vmId is the VMware VM MoRef ID (e.g., 'vm-123'). agentGuid is the Vision One endpoint agent GUID. Send SIGHUP to the process to reload this file without restart.",
+  "overrides": []
+}

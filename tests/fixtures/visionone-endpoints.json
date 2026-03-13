@@ -1,0 +1,42 @@
+[
+  {
+    "agentGuid": "agent-001",
+    "endpointName": "web-server-01",
+    "displayName": "Web Server 01",
+    "ipAddresses": ["10.0.1.10", "10.0.2.10"],
+    "osName": "Ubuntu 22.04",
+    "customTags": ["vmware:Environment/Production"]
+  },
+  {
+    "agentGuid": "agent-002",
+    "endpointName": "db-server-01",
+    "displayName": "DB Server 01",
+    "ipAddresses": ["10.0.1.20"],
+    "osName": "CentOS 8",
+    "customTags": []
+  },
+  {
+    "agentGuid": "agent-003",
+    "endpointName": "app-server-01",
+    "displayName": "App Server 01",
+    "ipAddresses": ["10.0.1.30"],
+    "osName": "Windows Server 2022",
+    "customTags": []
+  },
+  {
+    "agentGuid": "agent-004",
+    "endpointName": "cache-server-01",
+    "displayName": "Cache Server 01",
+    "ipAddresses": ["10.0.1.40"],
+    "osName": "Ubuntu 20.04",
+    "customTags": []
+  },
+  {
+    "agentGuid": "agent-005",
+    "endpointName": "unmatched-endpoint",
+    "displayName": "Unmatched Endpoint",
+    "ipAddresses": ["172.16.0.100"],
+    "osName": "Windows 11",
+    "customTags": ["manual-tag"]
+  }
+]

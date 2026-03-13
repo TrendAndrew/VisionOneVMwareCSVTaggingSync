@@ -1,0 +1,38 @@
+{
+  "sync": {
+    "intervalMinutes": 15,
+    "batchSize": 50,
+    "maxRetries": 3,
+    "retryDelayMs": 2000,
+    "removeOrphanedTags": false,
+    "tagPrefix": "vmware:",
+    "categorySeparator": "/",
+    "maxTagNameLength": 64
+  },
+  "matching": {
+    "strategy": "hostname-then-ip",
+    "hostnameNormalization": "lowercase-no-domain",
+    "ipMatchMode": "any",
+    "allowMultipleMatches": false
+  },
+  "vmware": {
+    "requestTimeoutMs": 30000,
+    "categoryFilter": [],
+    "tagFilter": [],
+    "vmFilter": {
+      "powerStates": ["POWERED_ON"],
+      "namePattern": null
+    }
+  },
+  "visionone": {
+    "endpointPageSize": 200,
+    "requestTimeoutMs": 30000,
+    "rateLimitDelayMs": 100
+  },
+  "state": {
+    "filePath": "./data/sync-state.json",
+    "backupOnWrite": true
+  },
+  "logLevel": "info",
+  "dryRun": false
+}

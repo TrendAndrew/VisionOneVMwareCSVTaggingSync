@@ -1,0 +1,26 @@
+{
+  "categories": [
+    {
+      "id": "cat-1",
+      "name": "Environment",
+      "description": "Deployment environment",
+      "cardinality": "SINGLE",
+      "associableTypes": ["VirtualMachine"]
+    },
+    {
+      "id": "cat-2",
+      "name": "Role",
+      "description": "Server role",
+      "cardinality": "MULTIPLE",
+      "associableTypes": ["VirtualMachine"]
+    }
+  ],
+  "tags": [
+    { "id": "tag-1", "name": "Production", "categoryId": "cat-1", "categoryName": "Environment" },
+    { "id": "tag-2", "name": "Web", "categoryId": "cat-2", "categoryName": "Role" },
+    { "id": "tag-3", "name": "Production", "categoryId": "cat-1", "categoryName": "Environment" },
+    { "id": "tag-4", "name": "Database", "categoryId": "cat-2", "categoryName": "Role" },
+    { "id": "tag-5", "name": "Staging", "categoryId": "cat-1", "categoryName": "Environment" },
+    { "id": "tag-6", "name": "Development", "categoryId": "cat-1", "categoryName": "Environment" }
+  ]
+}
