@@ -7,22 +7,36 @@
 
 import { z } from 'zod';
 
+/** Schema for a single vCenter host configuration. */
+export const vmwareHostSchema = z.object({
+  /** Unique label for this vCenter (used in logs and reports). Defaults to host value. */
+  label: z.string().optional(),
+  host: z.string().min(1, 'VMware host is required'),
+  username: z.string().min(1, 'VMware username is required'),
+  password: z.string().min(1, 'VMware password is required'),
+  verifySsl: z.boolean().default(true),
+  categoryFilter: z.array(z.string()).default([]),
+  tagFilter: z.array(z.string()).default([]),
+  vmFilter: z
+    .object({
+      powerStates: z.array(z.string()).default(['POWERED_ON']),
+      namePattern: z.string().nullable().default(null),
+    })
+    .default({}),
+  requestTimeoutMs: z.number().positive().default(30000),
+});
+
+export type VmwareHostConfig = z.infer<typeof vmwareHostSchema>;
+
 export const configSchema = z.object({
-  vmware: z.object({
-    host: z.string().min(1, 'VMware host is required'),
-    username: z.string().min(1, 'VMware username is required'),
-    password: z.string().min(1, 'VMware password is required'),
-    verifySsl: z.boolean().default(true),
-    categoryFilter: z.array(z.string()).default([]),
-    tagFilter: z.array(z.string()).default([]),
-    vmFilter: z
-      .object({
-        powerStates: z.array(z.string()).default(['POWERED_ON']),
-        namePattern: z.string().nullable().default(null),
-      })
-      .default({}),
-    requestTimeoutMs: z.number().positive().default(30000),
-  }),
+  /**
+   * VMware configuration. Accepts either:
+   *  - A single host object (backward compatible)
+   *  - An array of host objects (multi-vCenter)
+   *
+   * Internally normalised to an array via vmwareHosts.
+   */
+  vmware: z.union([vmwareHostSchema, z.array(vmwareHostSchema).min(1)]),
 
   visionone: z.object({
     apiToken: z.string().min(1, 'Vision One API token is required'),
@@ -76,3 +90,14 @@ export const configSchema = z.object({
 });
 
 export type ValidatedConfig = z.infer<typeof configSchema>;
+
+/**
+ * Normalise the vmware config to always be an array.
+ * Supports both single-host (backward compat) and multi-host configs.
+ */
+export function getVmwareHosts(config: ValidatedConfig): VmwareHostConfig[] {
+  const vmware = config.vmware;
+  const hosts = Array.isArray(vmware) ? vmware : [vmware];
+  // Default label to host if not provided
+  return hosts.map((h) => ({ ...h, label: h.label ?? h.host }));
+}

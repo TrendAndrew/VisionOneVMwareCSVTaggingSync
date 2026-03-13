@@ -88,7 +88,6 @@ export class EnvConfigProvider {
   private mergeWithEnv(
     fileConfig: Record<string, unknown>
   ): Record<string, unknown> {
-    const fileVmware = (fileConfig.vmware ?? {}) as Record<string, unknown>;
     const fileVisionone = (fileConfig.visionone ?? {}) as Record<
       string,
       unknown
@@ -96,30 +95,7 @@ export class EnvConfigProvider {
 
     return {
       ...fileConfig,
-      vmware: {
-        ...fileVmware,
-        ...this.envOverride('VMWARE_HOST', fileVmware.host, 'host'),
-        ...this.envOverride(
-          'VMWARE_USERNAME',
-          fileVmware.username,
-          'username'
-        ),
-        ...this.envOverride(
-          'VMWARE_PASSWORD',
-          fileVmware.password,
-          'password'
-        ),
-        ...this.envBoolOverride(
-          'VMWARE_VERIFY_SSL',
-          fileVmware.verifySsl,
-          'verifySsl'
-        ),
-        ...this.envNumberOverride(
-          'VMWARE_REQUEST_TIMEOUT_MS',
-          fileVmware.requestTimeoutMs,
-          'requestTimeoutMs'
-        ),
-      },
+      vmware: this.mergeVmwareConfig(fileConfig.vmware),
       visionone: {
         ...fileVisionone,
         ...this.envOverride(
@@ -203,5 +179,36 @@ export class EnvConfigProvider {
       return { [configKey]: fallback };
     }
     return {};
+  }
+
+  /**
+   * Merge VMware configuration.
+   *
+   * Supports three scenarios:
+   * 1. Multi-host array in JSON config → use as-is (env vars ignored for multi-host)
+   * 2. Single host in JSON config → overlay env vars on top
+   * 3. No JSON config → build single host from env vars only
+   *
+   * For multi-host, credentials should be in the JSON config file
+   * (not in env vars, since env vars can only represent one host).
+   */
+  private mergeVmwareConfig(
+    fileVmware: unknown
+  ): unknown {
+    // Multi-host array: use as-is from JSON config
+    if (Array.isArray(fileVmware)) {
+      return fileVmware;
+    }
+
+    // Single host: overlay env vars
+    const single = (fileVmware ?? {}) as Record<string, unknown>;
+    return {
+      ...single,
+      ...this.envOverride('VMWARE_HOST', single.host, 'host'),
+      ...this.envOverride('VMWARE_USERNAME', single.username, 'username'),
+      ...this.envOverride('VMWARE_PASSWORD', single.password, 'password'),
+      ...this.envBoolOverride('VMWARE_VERIFY_SSL', single.verifySsl, 'verifySsl'),
+      ...this.envNumberOverride('VMWARE_REQUEST_TIMEOUT_MS', single.requestTimeoutMs, 'requestTimeoutMs'),
+    };
   }
 }

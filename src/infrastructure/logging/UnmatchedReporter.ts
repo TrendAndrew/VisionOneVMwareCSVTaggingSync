@@ -15,6 +15,7 @@ import { EndpointMatch } from '../../domain/model/EndpointMatch';
 export interface UnmatchedVmEntry {
   vmId: string;
   name: string;
+  sourceVcenter?: string;
   guestHostname: string | null;
   ipAddresses: string[];
   tags: string[];
@@ -64,6 +65,7 @@ export class UnmatchedReporter {
       .map((vm) => ({
         vmId: vm.vmId,
         name: vm.name,
+        sourceVcenter: vm.sourceVcenter,
         guestHostname: vm.guestHostname,
         ipAddresses: vm.ipAddresses,
         tags: vm.tags.map((t) =>
@@ -183,6 +185,9 @@ export class UnmatchedReporter {
         lines.push('');
         lines.push(`  VM ID:     ${vm.vmId}`);
         lines.push(`  Name:      ${vm.name}`);
+        if (vm.sourceVcenter) {
+          lines.push(`  vCenter:   ${vm.sourceVcenter}`);
+        }
         lines.push(`  Hostname:  ${vm.guestHostname ?? '(none)'}`);
         lines.push(
           `  IPs:       ${vm.ipAddresses.length > 0 ? vm.ipAddresses.join(', ') : '(none)'}`

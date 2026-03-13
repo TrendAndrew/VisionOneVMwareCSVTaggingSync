@@ -1,0 +1,59 @@
+{
+  "sync": {
+    "intervalMinutes": 15,
+    "batchSize": 50,
+    "maxRetries": 3,
+    "retryDelayMs": 2000,
+    "removeOrphanedTags": false,
+    "tagPrefix": "vmware:",
+    "categorySeparator": "/",
+    "maxTagNameLength": 64
+  },
+  "matching": {
+    "strategy": "hostname-then-ip",
+    "hostnameNormalization": "lowercase-no-domain",
+    "ipMatchMode": "any",
+    "allowMultipleMatches": false
+  },
+  "vmware": [
+    {
+      "label": "dc1-vcenter",
+      "host": "vcenter-dc1.corp.local",
+      "username": "svc-tagsync@vsphere.local",
+      "password": "",
+      "verifySsl": true,
+      "categoryFilter": [],
+      "tagFilter": [],
+      "vmFilter": {
+        "powerStates": ["POWERED_ON"],
+        "namePattern": null
+      },
+      "requestTimeoutMs": 30000
+    },
+    {
+      "label": "dc2-vcenter",
+      "host": "vcenter-dc2.corp.local",
+      "username": "svc-tagsync@vsphere.local",
+      "password": "",
+      "verifySsl": true,
+      "categoryFilter": [],
+      "tagFilter": [],
+      "vmFilter": {
+        "powerStates": ["POWERED_ON"],
+        "namePattern": null
+      },
+      "requestTimeoutMs": 30000
+    }
+  ],
+  "visionone": {
+    "endpointPageSize": 200,
+    "requestTimeoutMs": 30000,
+    "rateLimitDelayMs": 100
+  },
+  "state": {
+    "filePath": "./data/sync-state.json",
+    "backupOnWrite": true
+  },
+  "logLevel": "info",
+  "dryRun": false
+}

@@ -14,4 +14,6 @@ export interface VmwareVm {
   guestHostname: string | null;
   ipAddresses: string[];
   tags: VmwareTag[];
+  /** The vCenter host this VM was fetched from (for multi-host environments). */
+  sourceVcenter?: string;
 }

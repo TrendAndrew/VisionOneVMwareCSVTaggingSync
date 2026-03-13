@@ -7,8 +7,9 @@
  */
 
 import { EnvConfigProvider } from './infrastructure/config/EnvConfigProvider';
+import { getVmwareHosts } from './infrastructure/config/ConfigSchema';
 import { WinstonLogger } from './infrastructure/logging/WinstonLogger';
-import { VmwareGatewayImpl } from './infrastructure/vmware/VmwareGatewayImpl';
+import { MultiVmwareGateway } from './infrastructure/vmware/MultiVmwareGateway';
 import { VisionOneGatewayImpl } from './infrastructure/visionone/VisionOneGatewayImpl';
 import { FileSyncStateRepo } from './infrastructure/state/FileSyncStateRepo';
 import { MappingOverrideFile } from './infrastructure/config/MappingOverrideFile';
@@ -34,20 +35,19 @@ export function bootstrap(): AppContext {
   const config = configProvider.load();
   const logger = new WinstonLogger(config.logLevel);
 
+  // Normalise VMware config to array (supports single or multi-host)
+  const vmwareHosts = getVmwareHosts(config);
+
   logger.info('CSVTaggingAI starting', {
     dryRun: config.dryRun,
     region: config.visionone.region,
     syncInterval: config.sync.intervalMinutes,
     matchStrategy: config.matching.strategy,
+    vCenterHosts: vmwareHosts.map((h) => h.label),
   });
 
-  // VMware gateway -- constructor creates its own auth manager and client
-  const vmwareGateway = new VmwareGatewayImpl(
-    config.vmware.host,
-    config.vmware.username,
-    config.vmware.password,
-    config.vmware.verifySsl
-  );
+  // VMware gateway -- aggregates VMs from all configured vCenters
+  const vmwareGateway = new MultiVmwareGateway(vmwareHosts, logger);
 
   // Vision One gateway -- constructor creates its own rest client and paginator
   const v1Gateway = new VisionOneGatewayImpl(
