@@ -1,5 +1,5 @@
 {
-  "name": "csvtaggingai",
+  "name": "vmwaretagging",
   "version": "1.0.0",
   "description": "One-way VMware tag synchronization to Trend Vision One custom asset tags",
   "main": "dist/index.js",

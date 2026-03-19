@@ -38,7 +38,7 @@ export function bootstrap(): AppContext {
   // Normalise VMware config to array (supports single or multi-host)
   const vmwareHosts = getVmwareHosts(config);
 
-  logger.info('CSVTaggingAI starting', {
+  logger.info('VMwareTagging starting', {
     dryRun: config.dryRun,
     region: config.visionone.region,
     syncInterval: config.sync.intervalMinutes,

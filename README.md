@@ -1,8 +1,10 @@
-# CSVTaggingAI
+# VMwareTagging
 
 One-way synchronization of VMware vSphere tags to Trend Vision One custom asset tags.
 
 VMware is the source of truth. Tags applied to VMs in vSphere are automatically replicated to matching endpoints in Vision One. Supports multiple vCenter hosts, admin mapping overrides, unmatched asset reporting, and live config reload via SIGHUP.
+
+> **Running on Windows?** See [docs/WINDOWS.md](docs/WINDOWS.md) for PowerShell scripts, setup instructions, and Windows Service configuration.
 
 ## Architecture
 
@@ -81,8 +83,8 @@ src/
 ### 1. Clone and Install
 
 ```bash
-git clone https://github.com/trendmicro/csvtaggingai.git
-cd csvtaggingai
+git clone https://github.com/trendmicro/vmwaretagging.git
+cd vmwaretagging
 npm install
 npm run build
 ```
@@ -347,13 +349,13 @@ After editing `mapping-overrides.json` or `default.json`, reload without restart
 
 ```bash
 # Systemd
-sudo systemctl reload csvtaggingai
+sudo systemctl reload vmwaretagging
 
 # Docker
-docker kill --signal=HUP csvtaggingai
+docker kill --signal=HUP vmwaretagging
 
 # Direct process
-kill -HUP $(pgrep -f csvtaggingai)
+kill -HUP $(pgrep -f vmwaretagging)
 ```
 
 ## Deployment
@@ -363,7 +365,7 @@ kill -HUP $(pgrep -f csvtaggingai)
 #### Build
 
 ```bash
-docker build -t csvtaggingai:latest .
+docker build -t vmwaretagging:latest .
 ```
 
 #### Run
@@ -376,12 +378,12 @@ docker compose up -d
 
 # Or using docker run directly
 docker run -d \
-  --name csvtaggingai \
+  --name vmwaretagging \
   --restart unless-stopped \
   --env-file .env \
   -v $(pwd)/config:/app/config:ro \
   -v $(pwd)/data:/app/data \
-  csvtaggingai:latest
+  vmwaretagging:latest
 ```
 
 #### Single sync run
@@ -391,34 +393,34 @@ docker run --rm \
   --env-file .env \
   -v $(pwd)/config:/app/config:ro \
   -v $(pwd)/data:/app/data \
-  csvtaggingai:latest \
+  vmwaretagging:latest \
   node dist/index.js --once
 ```
 
 #### Reload config
 
 ```bash
-docker kill --signal=HUP csvtaggingai
+docker kill --signal=HUP vmwaretagging
 ```
 
 #### View logs
 
 ```bash
-docker logs -f csvtaggingai
+docker logs -f vmwaretagging
 ```
 
 #### Using GHCR (pre-built images)
 
 ```bash
-docker pull ghcr.io/trendmicro/csvtaggingai:latest
+docker pull ghcr.io/trendmicro/vmwaretagging:latest
 
 docker run -d \
-  --name csvtaggingai \
+  --name vmwaretagging \
   --restart unless-stopped \
   --env-file .env \
   -v $(pwd)/config:/app/config:ro \
   -v $(pwd)/data:/app/data \
-  ghcr.io/trendmicro/csvtaggingai:latest
+  ghcr.io/trendmicro/vmwaretagging:latest
 ```
 
 ### Option 2: Systemd Service
@@ -441,51 +443,51 @@ nvm install 22
 
 ```bash
 # Create a dedicated service user
-sudo useradd -r -m -d /opt/csvtaggingai -s /usr/sbin/nologin csvtaggingai
+sudo useradd -r -m -d /opt/vmwaretagging -s /usr/sbin/nologin vmwaretagging
 
 # Clone and build
-sudo -u csvtaggingai bash -c '
-  cd /opt/csvtaggingai
-  git clone https://github.com/trendmicro/csvtaggingai.git app
+sudo -u vmwaretagging bash -c '
+  cd /opt/vmwaretagging
+  git clone https://github.com/trendmicro/vmwaretagging.git app
   cd app
   npm ci --omit=dev
   npm run build
 '
 
 # Create data directory
-sudo -u csvtaggingai mkdir -p /opt/csvtaggingai/app/data
+sudo -u vmwaretagging mkdir -p /opt/vmwaretagging/app/data
 ```
 
 #### Configure
 
 ```bash
 # Create .env file with restricted permissions
-sudo -u csvtaggingai cp /opt/csvtaggingai/app/.env.example /opt/csvtaggingai/app/.env
-sudo chmod 600 /opt/csvtaggingai/app/.env
-sudo -u csvtaggingai vi /opt/csvtaggingai/app/.env
+sudo -u vmwaretagging cp /opt/vmwaretagging/app/.env.example /opt/vmwaretagging/app/.env
+sudo chmod 600 /opt/vmwaretagging/app/.env
+sudo -u vmwaretagging vi /opt/vmwaretagging/app/.env
 
 # Edit the config file
-sudo -u csvtaggingai vi /opt/csvtaggingai/app/config/default.json
+sudo -u vmwaretagging vi /opt/vmwaretagging/app/config/default.json
 
 # For multi-vCenter, ensure config file permissions are restrictive
-sudo chmod 600 /opt/csvtaggingai/app/config/default.json
+sudo chmod 600 /opt/vmwaretagging/app/config/default.json
 ```
 
 #### Create the systemd unit file
 
 ```bash
-sudo tee /etc/systemd/system/csvtaggingai.service > /dev/null << 'EOF'
+sudo tee /etc/systemd/system/vmwaretagging.service > /dev/null << 'EOF'
 [Unit]
-Description=CSVTaggingAI - VMware to Vision One Tag Sync
-Documentation=https://github.com/trendmicro/csvtaggingai
+Description=VMwareTagging - VMware to Vision One Tag Sync
+Documentation=https://github.com/trendmicro/vmwaretagging
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 Type=simple
-User=csvtaggingai
-Group=csvtaggingai
-WorkingDirectory=/opt/csvtaggingai/app
+User=vmwaretagging
+Group=vmwaretagging
+WorkingDirectory=/opt/vmwaretagging/app
 ExecStart=/usr/bin/node dist/index.js
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
@@ -494,14 +496,14 @@ StartLimitIntervalSec=300
 StartLimitBurst=5
 
 # Environment
-EnvironmentFile=/opt/csvtaggingai/app/.env
+EnvironmentFile=/opt/vmwaretagging/app/.env
 
 # Security hardening
 NoNewPrivileges=true
 ProtectSystem=strict
 ProtectHome=true
-ReadWritePaths=/opt/csvtaggingai/app/data
-ReadOnlyPaths=/opt/csvtaggingai/app/config
+ReadWritePaths=/opt/vmwaretagging/app/data
+ReadOnlyPaths=/opt/vmwaretagging/app/config
 PrivateTmp=true
 ProtectKernelTunables=true
 ProtectKernelModules=true
@@ -513,7 +515,7 @@ LockPersonality=true
 # Logging (stdout/stderr → journald)
 StandardOutput=journal
 StandardError=journal
-SyslogIdentifier=csvtaggingai
+SyslogIdentifier=vmwaretagging
 
 [Install]
 WantedBy=multi-user.target
@@ -527,62 +529,62 @@ EOF
 sudo systemctl daemon-reload
 
 # Enable on boot
-sudo systemctl enable csvtaggingai
+sudo systemctl enable vmwaretagging
 
 # Start the service
-sudo systemctl start csvtaggingai
+sudo systemctl start vmwaretagging
 
 # Check status
-sudo systemctl status csvtaggingai
+sudo systemctl status vmwaretagging
 
 # View logs
-sudo journalctl -u csvtaggingai -f
+sudo journalctl -u vmwaretagging -f
 
 # View logs since last start
-sudo journalctl -u csvtaggingai --since "$(systemctl show csvtaggingai --property=ActiveEnterTimestamp --value)"
+sudo journalctl -u vmwaretagging --since "$(systemctl show vmwaretagging --property=ActiveEnterTimestamp --value)"
 ```
 
 #### Manage the service
 
 ```bash
 # Reload config without restart (sends SIGHUP)
-sudo systemctl reload csvtaggingai
+sudo systemctl reload vmwaretagging
 
 # Restart the service
-sudo systemctl restart csvtaggingai
+sudo systemctl restart vmwaretagging
 
 # Stop the service
-sudo systemctl stop csvtaggingai
+sudo systemctl stop vmwaretagging
 
 # View recent logs
-sudo journalctl -u csvtaggingai -n 100
+sudo journalctl -u vmwaretagging -n 100
 
 # View logs for a specific time range
-sudo journalctl -u csvtaggingai --since "2024-01-15 09:00:00" --until "2024-01-15 10:00:00"
+sudo journalctl -u vmwaretagging --since "2024-01-15 09:00:00" --until "2024-01-15 10:00:00"
 
 # Follow logs in real-time
-sudo journalctl -u csvtaggingai -f
+sudo journalctl -u vmwaretagging -f
 ```
 
 #### Run a one-off sync manually
 
 ```bash
-sudo -u csvtaggingai bash -c 'cd /opt/csvtaggingai/app && source .env && node dist/index.js --once'
+sudo -u vmwaretagging bash -c 'cd /opt/vmwaretagging/app && source .env && node dist/index.js --once'
 ```
 
 #### Update the application
 
 ```bash
-sudo systemctl stop csvtaggingai
+sudo systemctl stop vmwaretagging
 
-sudo -u csvtaggingai bash -c '
-  cd /opt/csvtaggingai/app
+sudo -u vmwaretagging bash -c '
+  cd /opt/vmwaretagging/app
   git pull
   npm ci --omit=dev
   npm run build
 '
 
-sudo systemctl start csvtaggingai
+sudo systemctl start vmwaretagging
 ```
 
 ### Option 3: AWS ECS Fargate
@@ -591,11 +593,11 @@ For AWS environments with VPN/Direct Connect to vCenter.
 
 ```bash
 # Build and push to ECR
-aws ecr create-repository --repository-name csvtaggingai
+aws ecr create-repository --repository-name vmwaretagging
 aws ecr get-login-password | docker login --username AWS --password-stdin <account>.dkr.ecr.<region>.amazonaws.com
 
-docker build -t <account>.dkr.ecr.<region>.amazonaws.com/csvtaggingai:latest .
-docker push <account>.dkr.ecr.<region>.amazonaws.com/csvtaggingai:latest
+docker build -t <account>.dkr.ecr.<region>.amazonaws.com/vmwaretagging:latest .
+docker push <account>.dkr.ecr.<region>.amazonaws.com/vmwaretagging:latest
 ```
 
 Create an ECS task definition with:
@@ -625,7 +627,7 @@ Create an ECS task definition with:
 
 | Task | Command |
 |------|---------|
-| View sync logs | `journalctl -u csvtaggingai -f` or `docker logs -f csvtaggingai` |
+| View sync logs | `journalctl -u vmwaretagging -f` or `docker logs -f vmwaretagging` |
 | Check unmatched assets | `cat data/unmatched-report.txt` |
 | Add a mapping override | Edit `config/mapping-overrides.json`, then reload |
 | Change sync interval | Edit `config/default.json`, then reload |
@@ -712,7 +714,7 @@ git push origin v1.0.0
 # The release pipeline will:
 # 1. Run tests
 # 2. Build linux/amd64 and linux/arm64 Docker images
-# 3. Push to ghcr.io/trendmicro/csvtaggingai:1.0.0
+# 3. Push to ghcr.io/trendmicro/vmwaretagging:1.0.0
 # 4. Create a GitHub release with auto-generated notes
 ```
 

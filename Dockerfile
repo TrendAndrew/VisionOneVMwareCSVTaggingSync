@@ -32,9 +32,9 @@ USER app
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
   CMD pgrep -f "node dist/index.js" > /dev/null || exit 1
 
-LABEL org.opencontainers.image.title="csvtaggingai"
+LABEL org.opencontainers.image.title="vmwaretagging"
 LABEL org.opencontainers.image.description="VMware to Vision One tag synchronization"
-LABEL org.opencontainers.image.source="https://github.com/trendmicro/csvtaggingai"
+LABEL org.opencontainers.image.source="https://github.com/trendmicro/vmwaretagging"
 
 ENTRYPOINT ["dumb-init", "--"]
 CMD ["node", "dist/index.js"]
