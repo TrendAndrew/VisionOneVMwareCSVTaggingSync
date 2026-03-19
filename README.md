@@ -197,6 +197,7 @@ Configuration is loaded from two sources. Environment variables always take prec
     "maxRetries": 3,
     "retryDelayMs": 2000,
     "removeOrphanedTags": false,
+    "orphanRemovalAllowlistFile": null,
     "tagPrefix": "vmware:",
     "categorySeparator": "/",
     "maxTagNameLength": 64
@@ -238,7 +239,8 @@ Configuration is loaded from two sources. Environment variables always take prec
 |--------|---------|-------------|
 | `intervalMinutes` | `15` | How often to run sync in continuous mode |
 | `removeOrphanedTags` | `false` | Remove Vision One tags when removed from VMware |
-| `tagPrefix` | `vmware:` | Prefix for created Vision One tags |
+| `orphanRemovalAllowlistFile` | `null` | Path to JSON array of tag names eligible for removal |
+| `tagPrefix` | `vmware:` | Prefix for created Vision One tags (also used as removal scope) |
 | `categorySeparator` | `/` | Separator between category and tag name |
 | `maxTagNameLength` | `64` | Max tag name length (truncated with hash if exceeded) |
 
@@ -272,12 +274,43 @@ Configuration is loaded from two sources. Environment variables always take prec
 
 #### Tag Removal
 
+When `removeOrphanedTags` is `false` (default):
+- Tags are only ever added, never removed. This is the safe default to prevent accidental mass-untagging.
+
 When `removeOrphanedTags` is `true`:
 - If a tag is removed from a VM in VMware, it will be removed from the matching Vision One endpoint on the next sync cycle.
-- The sync state tracks which tags were applied, so removals are detected by comparing the current VMware tags against the last-synced set.
+- **Only VMware-managed tags are removed.** By default, removal is scoped to tags matching the configured `tagPrefix` (e.g., `vmware:`). Tags created outside this tool are never touched.
 
-When `false` (default):
-- Tags are only ever added, never removed. This is the safe default to prevent accidental mass-untagging.
+For even more control, use an **orphan removal allowlist** -- a JSON file listing the exact tag names eligible for removal. Tags not in the list are never removed, even if they match the prefix:
+
+```json
+{
+  "sync": {
+    "removeOrphanedTags": true,
+    "orphanRemovalAllowlistFile": "./config/removal-allowlist.json"
+  }
+}
+```
+
+Where `config/removal-allowlist.json` is a flat JSON array of tag names:
+
+```json
+[
+  "vmware:Environment/Production",
+  "vmware:Environment/Staging",
+  "vmware:Role/Web",
+  "vmware:Role/Database",
+  "vmware:Role/AppServer"
+]
+```
+
+**Priority:** allowlist (if set) > prefix (if set) > remove all orphans.
+
+| Scenario | Behaviour |
+|----------|-----------|
+| `removeOrphanedTags: false` | Never removes anything (default) |
+| `removeOrphanedTags: true` (no allowlist) | Removes orphans matching `tagPrefix` only |
+| `removeOrphanedTags: true` + allowlist file | Removes only orphans listed in the file |
 
 ## Multi-vCenter Support
 

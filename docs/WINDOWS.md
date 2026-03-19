@@ -236,6 +236,7 @@ Full example with multiple vCenters and all tunable settings:
   "sync": {
     "intervalMinutes": 15,
     "removeOrphanedTags": false,
+    "orphanRemovalAllowlistFile": null,
     "tagPrefix": "vmware:",
     "categorySeparator": "/",
     "maxTagNameLength": 64,
@@ -267,6 +268,48 @@ Each vCenter entry in the `vmware` array supports:
 | `vmFilter.powerStates` | No | `["POWERED_ON"]` | Which VM power states to include |
 | `vmFilter.namePattern` | No | `null` (all) | Regex to filter VM names |
 | `requestTimeoutMs` | No | `30000` | API timeout per vCenter |
+
+### Tag Removal (Orphan Cleanup)
+
+By default, VMwareTagging only **adds** tags -- it never removes them. This is the safest option.
+
+When you enable `removeOrphanedTags`, the tool removes tags from Vision One endpoints when those tags are no longer present on the matching VM in VMware. To prevent accidental removal of tags created outside this tool, removal is scoped:
+
+| Setting | Behaviour |
+|---------|-----------|
+| `removeOrphanedTags: false` (default) | Never removes anything |
+| `removeOrphanedTags: true` | Removes orphans matching `tagPrefix` only (e.g., `vmware:*`) |
+| `removeOrphanedTags: true` + `orphanRemovalAllowlistFile` | Removes only orphans listed in the file |
+
+**Using the allowlist** is the safest way to enable removal. Create a file listing only the VMware-managed tags that are eligible for cleanup:
+
+```powershell
+# config\removal-allowlist.json
+notepad config\removal-allowlist.json
+```
+
+```json
+[
+  "vmware:Environment/Production",
+  "vmware:Environment/Staging",
+  "vmware:Environment/Development",
+  "vmware:Role/Web",
+  "vmware:Role/Database"
+]
+```
+
+Then reference it in `config\default.json`:
+
+```json
+{
+  "sync": {
+    "removeOrphanedTags": true,
+    "orphanRemovalAllowlistFile": "./config/removal-allowlist.json"
+  }
+}
+```
+
+Tags not in the allowlist are never removed, even if they match the `vmware:` prefix. This lets you protect specific tags that exist in both VMware and Vision One but should not be automatically cleaned up.
 
 ### Admin Mapping Overrides
 

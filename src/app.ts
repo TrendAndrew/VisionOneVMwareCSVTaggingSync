@@ -6,6 +6,8 @@
  * and injected into domain services and the application orchestrator.
  */
 
+import fs from 'fs';
+import path from 'path';
 import { EnvConfigProvider } from './infrastructure/config/EnvConfigProvider';
 import { getVmwareHosts } from './infrastructure/config/ConfigSchema';
 import { WinstonLogger } from './infrastructure/logging/WinstonLogger';
@@ -82,8 +84,30 @@ export function bootstrap(): AppContext {
     allowMultipleMatches: config.matching.allowMultipleMatches,
   });
 
+  // Load orphan removal allowlist if configured
+  let orphanRemovalAllowlist: Set<string> | undefined;
+  if (config.sync.orphanRemovalAllowlistFile) {
+    const allowlistPath = path.resolve(config.sync.orphanRemovalAllowlistFile);
+    try {
+      const raw = fs.readFileSync(allowlistPath, 'utf-8');
+      const parsed = JSON.parse(raw) as string[];
+      orphanRemovalAllowlist = new Set(parsed);
+      logger.info('Orphan removal allowlist loaded', {
+        file: allowlistPath,
+        tagCount: orphanRemovalAllowlist.size,
+      });
+    } catch (err) {
+      logger.error(
+        `Failed to load orphan removal allowlist from ${allowlistPath}`,
+        err instanceof Error ? err : new Error(String(err))
+      );
+    }
+  }
+
   const diffService = new DiffService({
     removeOrphanedTags: config.sync.removeOrphanedTags,
+    orphanRemovalPrefix: config.sync.tagPrefix,
+    orphanRemovalAllowlist,
   });
 
   const tagNamingService = new TagNamingService({

@@ -5,6 +5,7 @@
     "maxRetries": 3,
     "retryDelayMs": 2000,
     "removeOrphanedTags": false,
+    "orphanRemovalAllowlistFile": null,
     "tagPrefix": "vmware:",
     "categorySeparator": "/",
     "maxTagNameLength": 64

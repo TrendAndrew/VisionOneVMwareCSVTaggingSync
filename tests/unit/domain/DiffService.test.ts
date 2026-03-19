@@ -226,5 +226,70 @@ describe('DiffService', () => {
 
       expect(diffs).toHaveLength(2);
     });
+
+    it('should only remove tags matching orphanRemovalPrefix', () => {
+      const svc = new DiffService(defaultConfig({
+        removeOrphanedTags: true,
+        orphanRemovalPrefix: 'vmware:',
+      }));
+      const oldTags = ['vmware:Environment/Prod', 'manual:CustomLabel', 'vmware:Role/Web'];
+      const newTags = ['vmware:Environment/Prod'];
+      const oldHash = svc.computeTagHash(oldTags);
+
+      const match = makeMatch('vm-1', 'ep-1');
+      const syncState = new Map([['ep-1', makeSyncEntry('ep-1', oldTags, oldHash)]]);
+      const desiredMap = new Map([['ep-1', newTags]]);
+
+      const diffs = svc.computeDiffs([match], syncState, new Set(), desiredMap);
+
+      expect(diffs).toHaveLength(1);
+      // vmware:Role/Web should be removed (matches prefix)
+      expect(diffs[0].tagsToRemove).toContain('vmware:Role/Web');
+      // manual:CustomLabel should NOT be removed (wrong prefix)
+      expect(diffs[0].tagsToRemove).not.toContain('manual:CustomLabel');
+    });
+
+    it('should only remove tags in orphanRemovalAllowlist when set', () => {
+      const allowlist = new Set(['vmware:Environment/Staging', 'vmware:Role/Web']);
+      const svc = new DiffService(defaultConfig({
+        removeOrphanedTags: true,
+        orphanRemovalPrefix: 'vmware:',
+        orphanRemovalAllowlist: allowlist,
+      }));
+      const oldTags = ['vmware:Environment/Staging', 'vmware:Role/Web', 'vmware:Team/Infra'];
+      const newTags: string[] = [];
+      const oldHash = svc.computeTagHash(oldTags);
+
+      const match = makeMatch('vm-1', 'ep-1');
+      const syncState = new Map([['ep-1', makeSyncEntry('ep-1', oldTags, oldHash)]]);
+      const desiredMap = new Map([['ep-1', newTags]]);
+
+      const diffs = svc.computeDiffs([match], syncState, new Set(), desiredMap);
+
+      expect(diffs).toHaveLength(1);
+      // Only allowlisted tags are removed
+      expect(diffs[0].tagsToRemove).toContain('vmware:Environment/Staging');
+      expect(diffs[0].tagsToRemove).toContain('vmware:Role/Web');
+      // vmware:Team/Infra has correct prefix but is NOT in allowlist
+      expect(diffs[0].tagsToRemove).not.toContain('vmware:Team/Infra');
+    });
+
+    it('should allow all removals when no prefix or allowlist is set', () => {
+      const svc = new DiffService(defaultConfig({
+        removeOrphanedTags: true,
+      }));
+      const oldTags = ['anyTag', 'anotherTag'];
+      const newTags: string[] = [];
+      const oldHash = svc.computeTagHash(oldTags);
+
+      const match = makeMatch('vm-1', 'ep-1');
+      const syncState = new Map([['ep-1', makeSyncEntry('ep-1', oldTags, oldHash)]]);
+      const desiredMap = new Map([['ep-1', newTags]]);
+
+      const diffs = svc.computeDiffs([match], syncState, new Set(), desiredMap);
+
+      expect(diffs).toHaveLength(1);
+      expect(diffs[0].tagsToRemove).toEqual(['anyTag', 'anotherTag']);
+    });
   });
 });

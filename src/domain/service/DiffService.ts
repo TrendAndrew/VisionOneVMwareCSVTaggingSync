@@ -14,6 +14,21 @@ import { TagDiff } from '../model/TagDiff';
 export interface DiffConfig {
   /** When true, tags present in sync state but absent from desired tags are removed. */
   removeOrphanedTags: boolean;
+  /**
+   * Optional prefix that orphaned tags must match to be eligible for removal.
+   * When set, only tags starting with this prefix can be removed as orphans.
+   * Tags not matching the prefix are left untouched even if orphaned.
+   * Defaults to the sync tagPrefix (e.g., "vmware:") so only VMware-managed
+   * tags are ever removed.
+   */
+  orphanRemovalPrefix?: string;
+  /**
+   * Optional allowlist of exact tag names eligible for orphan removal.
+   * When set, only tags in this list can be removed as orphans -- the prefix
+   * check is skipped. Use this to load a catalog of VMware-managed tags and
+   * guarantee nothing outside that catalog is ever touched.
+   */
+  orphanRemovalAllowlist?: Set<string>;
 }
 
 export class DiffService {
@@ -93,7 +108,9 @@ export class DiffService {
 
     let tagsToRemove: string[] = [];
     if (this.config.removeOrphanedTags) {
-      tagsToRemove = lastSyncedTags.filter((tag) => !desiredSet.has(tag));
+      tagsToRemove = lastSyncedTags
+        .filter((tag) => !desiredSet.has(tag))
+        .filter((tag) => this.isEligibleForRemoval(tag));
     }
 
     if (tagsToAdd.length === 0 && tagsToRemove.length === 0) {
@@ -117,6 +134,24 @@ export class DiffService {
     return match.vmwareVm.tags
       .filter((t) => t.categoryName !== undefined)
       .map((t) => `${t.categoryName}/${t.name}`);
+  }
+
+  /**
+   * Determine whether an orphaned tag is eligible for removal.
+   *
+   * Priority:
+   * 1. If an explicit allowlist is configured, only tags in that list can be removed.
+   * 2. Otherwise, if a prefix is configured, only tags matching that prefix can be removed.
+   * 3. If neither is configured, all orphaned tags are eligible (original behaviour).
+   */
+  private isEligibleForRemoval(tagName: string): boolean {
+    if (this.config.orphanRemovalAllowlist) {
+      return this.config.orphanRemovalAllowlist.has(tagName);
+    }
+    if (this.config.orphanRemovalPrefix) {
+      return tagName.startsWith(this.config.orphanRemovalPrefix);
+    }
+    return true;
   }
 
   /**

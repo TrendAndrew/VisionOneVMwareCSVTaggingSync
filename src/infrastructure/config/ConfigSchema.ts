@@ -58,6 +58,13 @@ export const configSchema = z.object({
       maxRetries: z.number().nonnegative().default(3),
       retryDelayMs: z.number().nonnegative().default(2000),
       removeOrphanedTags: z.boolean().default(false),
+      /**
+       * File path to a JSON array of exact tag names eligible for orphan removal.
+       * When set, only tags in this file can be removed -- everything else is
+       * left untouched. Useful for loading a catalog of VMware-managed tags.
+       * If not set, falls back to prefix-based filtering using tagPrefix.
+       */
+      orphanRemovalAllowlistFile: z.string().nullable().default(null),
       tagPrefix: z.string().default('vmware:'),
       categorySeparator: z.string().default('/'),
       maxTagNameLength: z.number().positive().default(64),
