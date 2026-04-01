@@ -3,36 +3,36 @@
  *
  * Coordinates the full sync workflow:
  *  1. Connect to VMware and fetch VMs with resolved tags
- *  2. Fetch Vision One endpoints and existing custom tags
+ *  2. Fetch Vision One devices and existing custom tags
  *  3. Apply admin mapping overrides (highest priority)
- *  4. Run automatic matching on remaining VMs/endpoints
+ *  4. Run automatic matching on remaining VMs/devices
  *  5. Write an unmatched report for admin review
- *  6. Compute tag diffs (desired vs. last-synced state)
- *  7. Create any missing Vision One custom tags
- *  8. Apply and remove tags to reach desired state
+ *  6. Resolve VMware tags to Vision One tag IDs (key/value match)
+ *  7. Compute tag diffs (desired vs. last-synced state)
+ *  8. Apply tag updates via batch device update API
  *  9. Persist updated sync state
  */
 
 import { VmwareGateway } from '../domain/port/VmwareGateway';
-import { VisionOneGateway } from '../domain/port/VisionOneGateway';
+import { VisionOneGateway, DeviceTagUpdate } from '../domain/port/VisionOneGateway';
 import { SyncStateRepository } from '../domain/port/SyncStateRepository';
 import { MappingOverrideProvider } from '../domain/port/MappingOverrideProvider';
 import { Logger } from '../domain/port/Logger';
 import { MatchingService } from '../domain/service/MatchingService';
 import { DiffService } from '../domain/service/DiffService';
-import { TagNamingService } from '../domain/service/TagNamingService';
 import { UnmatchedReporter } from '../infrastructure/logging/UnmatchedReporter';
-import { EndpointMatch } from '../domain/model/EndpointMatch';
+import { DeviceMatch } from '../domain/model/EndpointMatch';
 import { VmwareVm } from '../domain/model/VmwareVm';
-import { VisionOneEndpoint } from '../domain/model/VisionOneEndpoint';
+import { VisionOneDevice } from '../domain/model/VisionOneEndpoint';
+import { VisionOneCustomTag } from '../domain/model/VisionOneCustomTag';
 
 export interface SyncResult {
   matchedCount: number;
   unmatchedVmCount: number;
-  unmatchedEndpointCount: number;
-  tagsCreated: number;
-  tagsApplied: number;
-  tagsRemoved: number;
+  unmatchedDeviceCount: number;
+  tagsCreated: number;       // kept for backward compat but always 0
+  devicesUpdated: number;
+  deviceUpdateErrors: number;
   errors: string[];
   durationMs: number;
 }
@@ -44,7 +44,6 @@ export class SyncOrchestrator {
     private readonly syncStateRepo: SyncStateRepository,
     private readonly matchingService: MatchingService,
     private readonly diffService: DiffService,
-    private readonly tagNamingService: TagNamingService,
     private readonly mappingOverrides: MappingOverrideProvider,
     private readonly unmatchedReporter: UnmatchedReporter,
     private readonly logger: Logger
@@ -54,17 +53,17 @@ export class SyncOrchestrator {
    * Execute a full sync cycle.
    *
    * This is the main entry point. It fetches data from both sides,
-   * matches VMs to endpoints, computes diffs, and applies changes.
+   * matches VMs to devices, computes diffs, and applies changes.
    */
   async execute(): Promise<SyncResult> {
     const start = Date.now();
     const result: SyncResult = {
       matchedCount: 0,
       unmatchedVmCount: 0,
-      unmatchedEndpointCount: 0,
+      unmatchedDeviceCount: 0,
       tagsCreated: 0,
-      tagsApplied: 0,
-      tagsRemoved: 0,
+      devicesUpdated: 0,
+      deviceUpdateErrors: 0,
       errors: [],
       durationMs: 0,
     };
@@ -75,47 +74,47 @@ export class SyncOrchestrator {
       await this.vmwareGateway.connect();
 
       // Step 2: Fetch data in parallel
-      this.logger.info('Fetching VMs, endpoints, tags, and sync state');
-      const [vms, endpoints, existingTags, syncState] = await Promise.all([
+      this.logger.info('Fetching VMs, devices, tags, and sync state');
+      const [vms, devices, existingTags, syncState] = await Promise.all([
         this.fetchVmsWithTags(),
-        this.visionOneGateway.listEndpoints(),
+        this.visionOneGateway.listDevices(),
         this.visionOneGateway.listCustomTags(),
         this.syncStateRepo.load(),
       ]);
 
       this.logger.info('Data fetched', {
         vmCount: vms.length,
-        endpointCount: endpoints.length,
+        deviceCount: devices.length,
         existingTagCount: existingTags.length,
         syncStateEntries: syncState.entries.size,
       });
 
       // Step 3: Apply mapping overrides first (highest priority)
-      const overrideMatches = this.applyOverrides(vms, endpoints);
+      const overrideMatches = this.applyOverrides(vms, devices);
       if (overrideMatches.length > 0) {
         this.logger.info('Mapping overrides applied', {
           overrideCount: overrideMatches.length,
         });
       }
 
-      // Step 4: Run automatic matching on remaining VMs and endpoints
+      // Step 4: Run automatic matching on remaining VMs and devices
       const overrideVmIds = new Set(
         overrideMatches.map((m) => m.vmwareVm.vmId)
       );
-      const overrideEndpointGuids = new Set(
-        overrideMatches.map((m) => m.visionOneEndpoint.agentGuid)
+      const overrideDeviceIds = new Set(
+        overrideMatches.map((m) => m.visionOneDevice.id)
       );
 
       const remainingVms = vms.filter(
         (vm) => !overrideVmIds.has(vm.vmId)
       );
-      const remainingEndpoints = endpoints.filter(
-        (ep) => !overrideEndpointGuids.has(ep.agentGuid)
+      const remainingDevices = devices.filter(
+        (d) => !overrideDeviceIds.has(d.id)
       );
 
       const autoMatches = this.matchingService.match(
         remainingVms,
-        remainingEndpoints
+        remainingDevices
       );
       const allMatches = [...overrideMatches, ...autoMatches];
       result.matchedCount = allMatches.length;
@@ -129,11 +128,11 @@ export class SyncOrchestrator {
       // Step 5: Write unmatched report
       const report = await this.unmatchedReporter.writeReport(
         vms,
-        endpoints,
+        devices,
         allMatches
       );
       result.unmatchedVmCount = report.unmatchedVms.length;
-      result.unmatchedEndpointCount = report.unmatchedEndpoints.length;
+      result.unmatchedDeviceCount = report.unmatchedDevices.length;
 
       if (report.unmatchedVms.length > 0) {
         this.logger.warn(
@@ -142,115 +141,123 @@ export class SyncOrchestrator {
         );
       }
 
-      if (report.unmatchedEndpoints.length > 0) {
+      if (report.unmatchedDevices.length > 0) {
         this.logger.warn(
-          `${report.unmatchedEndpoints.length} endpoints unmatched`,
-          { count: report.unmatchedEndpoints.length }
+          `${report.unmatchedDevices.length} devices unmatched`,
+          { count: report.unmatchedDevices.length }
         );
       }
 
-      // Step 6: Pre-compute desired V1 tag names for each matched endpoint
-      const desiredTagsByAgentGuid = this.computeDesiredTags(allMatches);
+      // Step 6: Resolve VMware tags to Vision One tag IDs via key/value matching
+      const tagLookup = new Map<string, string>();
+      for (const tag of existingTags) {
+        tagLookup.set(`${tag.key}::${tag.value}`, tag.tagId);
+      }
+
+      const desiredTagIdsByDeviceId = new Map<string, string[]>();
+      const desiredTagNamesByDeviceId = new Map<string, string[]>();
+      for (const match of allMatches) {
+        const device = match.visionOneDevice;
+        const tagIds: string[] = [];
+        const tagNames: string[] = [];
+        for (const vmTag of match.vmwareVm.tags) {
+          if (!vmTag.categoryName) continue;
+          const lookupKey = `${vmTag.categoryName}::${vmTag.name}`;
+          const tagId = tagLookup.get(lookupKey);
+          if (tagId) {
+            tagIds.push(tagId);
+            tagNames.push(`${vmTag.categoryName}/${vmTag.name}`);
+          } else {
+            this.logger.warn(
+              `No Vision One tag found for VMware tag "${vmTag.categoryName}/${vmTag.name}" — ` +
+              'ensure the tag is pre-created in the Vision One console',
+              { category: vmTag.categoryName, tag: vmTag.name, deviceId: device.id }
+            );
+          }
+        }
+        desiredTagIdsByDeviceId.set(device.id, tagIds);
+        desiredTagNamesByDeviceId.set(device.id, tagNames);
+      }
 
       // Step 7: Compute diffs against sync state
-      const existingTagNames = new Set(
-        existingTags.map((t) => t.tagName)
-      );
+      const existingTagNames = new Set<string>();
+      for (const tag of existingTags) {
+        existingTagNames.add(`${tag.key}/${tag.value}`);
+      }
       const diffs = this.diffService.computeDiffs(
         allMatches,
         syncState.entries,
         existingTagNames,
-        desiredTagsByAgentGuid
+        desiredTagNamesByDeviceId
       );
 
       this.logger.info('Diffs computed', { diffCount: diffs.length });
 
-      // Step 8: Create missing tags in Vision One
-      const tagNameToId = new Map(
-        existingTags.map((t) => [t.tagName, t.tagId])
-      );
+      // Step 8: Apply tag updates via batch device update API
+      const updates: DeviceTagUpdate[] = [];
 
       for (const diff of diffs) {
-        for (const tagName of diff.tagsToAdd) {
-          if (!tagNameToId.has(tagName)) {
-            try {
-              const created =
-                await this.visionOneGateway.createCustomTag(tagName);
-              tagNameToId.set(created.tagName, created.tagId);
-              result.tagsCreated++;
-            } catch (err) {
-              const msg = `Failed to create tag "${tagName}": ${
-                err instanceof Error ? err.message : String(err)
-              }`;
-              this.logger.error(
-                msg,
-                err instanceof Error ? err : new Error(String(err))
-              );
-              result.errors.push(msg);
-            }
-          }
-        }
-      }
+        const device = diff.deviceMatch.visionOneDevice;
+        const desiredIds = desiredTagIdsByDeviceId.get(device.id) ?? [];
 
-      // Step 9: Apply and remove tags
-      for (const diff of diffs) {
-        const agentGuid = diff.endpointMatch.visionOneEndpoint.agentGuid;
+        // Start with current non-managed tag IDs (preserve tags we don't manage)
+        const currentTagIds = new Set(device.assetCustomTagIds);
 
-        for (const tagName of diff.tagsToAdd) {
-          const tagId = tagNameToId.get(tagName);
-          if (tagId) {
-            try {
-              await this.visionOneGateway.applyTagToEndpoint(
-                tagId,
-                agentGuid
-              );
-              result.tagsApplied++;
-            } catch (err) {
-              const msg = `Failed to apply tag "${tagName}" to ${agentGuid}: ${
-                err instanceof Error ? err.message : String(err)
-              }`;
-              this.logger.error(
-                msg,
-                err instanceof Error ? err : new Error(String(err))
-              );
-              result.errors.push(msg);
-            }
-          }
-        }
-
+        // Remove tags that are in tagsToRemove
         for (const tagName of diff.tagsToRemove) {
-          const tagId = tagNameToId.get(tagName);
-          if (tagId) {
-            try {
-              await this.visionOneGateway.removeTagFromEndpoint(
-                tagId,
-                agentGuid
-              );
-              result.tagsRemoved++;
-            } catch (err) {
-              const msg = `Failed to remove tag "${tagName}" from ${agentGuid}: ${
-                err instanceof Error ? err.message : String(err)
-              }`;
-              this.logger.error(
-                msg,
-                err instanceof Error ? err : new Error(String(err))
-              );
-              result.errors.push(msg);
-            }
+          const parts = tagName.split('/');
+          if (parts.length >= 2) {
+            const lookupKey = `${parts[0]}::${parts.slice(1).join('/')}`;
+            const tagId = tagLookup.get(lookupKey);
+            if (tagId) currentTagIds.delete(tagId);
+          }
+        }
+
+        // Add tags that are in tagsToAdd
+        for (const tagName of diff.tagsToAdd) {
+          const parts = tagName.split('/');
+          if (parts.length >= 2) {
+            const lookupKey = `${parts[0]}::${parts.slice(1).join('/')}`;
+            const tagId = tagLookup.get(lookupKey);
+            if (tagId) currentTagIds.add(tagId);
+          }
+        }
+
+        const finalTagIds = [...currentTagIds];
+
+        if (finalTagIds.length > 20) {
+          this.logger.warn(`Device ${device.id} would exceed 20 tag limit, truncating`, {
+            deviceId: device.id,
+            tagCount: finalTagIds.length,
+          });
+          finalTagIds.length = 20;
+        }
+
+        updates.push({ deviceId: device.id, assetCustomTagIds: finalTagIds });
+      }
+
+      if (updates.length > 0) {
+        const results = await this.visionOneGateway.updateDeviceTags(updates);
+        for (const r of results) {
+          if (r.status === 204) {
+            result.devicesUpdated++;
+          } else {
+            result.deviceUpdateErrors++;
+            result.errors.push(r.error ?? `Device ${r.deviceId} update failed`);
           }
         }
       }
 
-      // Step 10: Update sync state
+      // Step 9: Update sync state
       const updatedEntries = new Map(syncState.entries);
       for (const diff of diffs) {
-        const vm = diff.endpointMatch.vmwareVm;
-        const ep = diff.endpointMatch.visionOneEndpoint;
-        const desiredTags = desiredTagsByAgentGuid.get(ep.agentGuid) ?? [];
+        const vm = diff.deviceMatch.vmwareVm;
+        const device = diff.deviceMatch.visionOneDevice;
+        const desiredTags = desiredTagNamesByDeviceId.get(device.id) ?? [];
 
-        updatedEntries.set(ep.agentGuid, {
+        updatedEntries.set(device.id, {
           vmId: vm.vmId,
-          agentGuid: ep.agentGuid,
+          deviceId: device.id,
           lastSyncedTags: desiredTags,
           lastSyncTimestamp: new Date().toISOString(),
           lastSyncHash: this.diffService.computeTagHash(desiredTags),
@@ -279,10 +286,10 @@ export class SyncOrchestrator {
     this.logger.info('Sync cycle complete', {
       matched: result.matchedCount,
       unmatchedVms: result.unmatchedVmCount,
-      unmatchedEndpoints: result.unmatchedEndpointCount,
+      unmatchedDevices: result.unmatchedDeviceCount,
       tagsCreated: result.tagsCreated,
-      tagsApplied: result.tagsApplied,
-      tagsRemoved: result.tagsRemoved,
+      devicesUpdated: result.devicesUpdated,
+      deviceUpdateErrors: result.deviceUpdateErrors,
       errors: result.errors.length,
       durationMs: result.durationMs,
     });
@@ -330,19 +337,19 @@ export class SyncOrchestrator {
   }
 
   /**
-   * Apply mapping overrides to create forced EndpointMatch entries.
+   * Apply mapping overrides to create forced DeviceMatch entries.
    *
    * For each VM that has a mapping override, look up both the VM and
-   * the target endpoint. If both exist, create a match with override
+   * the target device. If both exist, create a match with override
    * metadata.
    */
   private applyOverrides(
     vms: VmwareVm[],
-    endpoints: VisionOneEndpoint[]
-  ): EndpointMatch[] {
-    const matches: EndpointMatch[] = [];
-    const endpointMap = new Map(
-      endpoints.map((ep) => [ep.agentGuid, ep])
+    devices: VisionOneDevice[]
+  ): DeviceMatch[] {
+    const matches: DeviceMatch[] = [];
+    const deviceMap = new Map(
+      devices.map((d) => [d.id, d])
     );
 
     for (const vm of vms) {
@@ -351,54 +358,23 @@ export class SyncOrchestrator {
         continue;
       }
 
-      const endpoint = endpointMap.get(override.agentGuid);
-      if (!endpoint) {
+      const device = deviceMap.get(override.deviceId);
+      if (!device) {
         this.logger.warn(
-          `Mapping override for VM "${vm.vmId}" references unknown endpoint "${override.agentGuid}"`,
-          { vmId: vm.vmId, agentGuid: override.agentGuid }
+          `Mapping override for VM "${vm.vmId}" references unknown device "${override.deviceId}"`,
+          { vmId: vm.vmId, deviceId: override.deviceId }
         );
         continue;
       }
 
       matches.push({
         vmwareVm: vm,
-        visionOneEndpoint: endpoint,
+        visionOneDevice: device,
         matchedOn: 'hostname', // override-based, treated as exact
         confidence: 'exact',
       });
     }
 
     return matches;
-  }
-
-  /**
-   * Pre-compute desired Vision One tag names for each matched endpoint.
-   *
-   * Uses TagNamingService to transform VMware category/tag pairs into
-   * properly formatted V1 tag names. The resulting map is keyed by
-   * agentGuid for consumption by DiffService.
-   */
-  private computeDesiredTags(
-    matches: EndpointMatch[]
-  ): Map<string, string[]> {
-    const result = new Map<string, string[]>();
-
-    for (const match of matches) {
-      const vm = match.vmwareVm;
-      const agentGuid = match.visionOneEndpoint.agentGuid;
-
-      const desiredTags = vm.tags
-        .filter((t) => t.categoryName !== undefined && t.categoryName !== '')
-        .map((t) =>
-          this.tagNamingService.toVisionOneTagName(
-            t.categoryName!,
-            t.name
-          )
-        );
-
-      result.set(agentGuid, desiredTags);
-    }
-
-    return result;
   }
 }

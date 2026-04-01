@@ -109,9 +109,9 @@ export class EnvConfigProvider {
           'region'
         ),
         ...this.envNumberOverride(
-          'VISIONONE_ENDPOINT_PAGE_SIZE',
-          fileVisionone.endpointPageSize,
-          'endpointPageSize'
+          'VISIONONE_DEVICE_PAGE_SIZE',
+          fileVisionone.devicePageSize,
+          'devicePageSize'
         ),
         ...this.envNumberOverride(
           'VISIONONE_REQUEST_TIMEOUT_MS',

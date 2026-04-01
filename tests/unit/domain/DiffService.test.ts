@@ -1,8 +1,8 @@
 import { DiffService, DiffConfig } from '../../../src/domain/service/DiffService';
-import { EndpointMatch } from '../../../src/domain/model/EndpointMatch';
+import { DeviceMatch } from '../../../src/domain/model/EndpointMatch';
 import { SyncStateEntry } from '../../../src/domain/model/SyncState';
 import { VmwareVm } from '../../../src/domain/model/VmwareVm';
-import { VisionOneEndpoint } from '../../../src/domain/model/VisionOneEndpoint';
+import { VisionOneDevice } from '../../../src/domain/model/VisionOneEndpoint';
 
 // ── helpers ──
 
@@ -22,34 +22,33 @@ function makeVm(vmId: string, tags: { name: string; categoryName?: string }[] = 
   };
 }
 
-function makeEndpoint(agentGuid: string): VisionOneEndpoint {
+function makeDevice(deviceId: string): VisionOneDevice {
   return {
-    agentGuid,
-    endpointName: agentGuid,
-    displayName: agentGuid,
+    id: deviceId,
+    deviceName: deviceId,
     ipAddresses: [],
     osName: 'Linux',
-    customTags: [],
+    assetCustomTagIds: [],
   };
 }
 
-function makeMatch(vmId: string, agentGuid: string, tags: { name: string; categoryName?: string }[] = []): EndpointMatch {
+function makeMatch(vmId: string, deviceId: string, tags: { name: string; categoryName?: string }[] = []): DeviceMatch {
   return {
     vmwareVm: makeVm(vmId, tags),
-    visionOneEndpoint: makeEndpoint(agentGuid),
+    visionOneDevice: makeDevice(deviceId),
     matchedOn: 'hostname',
     confidence: 'exact',
   };
 }
 
 function makeSyncEntry(
-  agentGuid: string,
+  deviceId: string,
   lastSyncedTags: string[],
   hash: string
 ): SyncStateEntry {
   return {
     vmId: 'vm-x',
-    agentGuid,
+    deviceId,
     lastSyncedTags,
     lastSyncTimestamp: new Date().toISOString(),
     lastSyncHash: hash,

@@ -5,25 +5,31 @@
  * allowing the domain to remain infrastructure-agnostic.
  */
 
-import { VisionOneEndpoint } from '../model/VisionOneEndpoint';
+import { VisionOneDevice } from '../model/VisionOneEndpoint';
 import { VisionOneCustomTag } from '../model/VisionOneCustomTag';
 
-export interface VisionOneGateway {
-  /** Retrieve all managed endpoints. */
-  listEndpoints(): Promise<VisionOneEndpoint[]>;
+export interface DeviceTagUpdate {
+  deviceId: string;
+  assetCustomTagIds: string[];
+}
 
-  /** Retrieve all custom tags. */
+export interface DeviceTagUpdateResult {
+  deviceId: string;
+  status: number;
+  error?: string;
+}
+
+export interface VisionOneGateway {
+  /** Retrieve all ASRM discovered devices. */
+  listDevices(): Promise<VisionOneDevice[]>;
+
+  /** Retrieve all custom tags (pre-created in Vision One console). */
   listCustomTags(): Promise<VisionOneCustomTag[]>;
 
-  /** Create a new custom tag and return the created entity. */
-  createCustomTag(name: string): Promise<VisionOneCustomTag>;
-
-  /** Apply a single tag to an endpoint. */
-  applyTagToEndpoint(tagId: string, agentGuid: string): Promise<void>;
-
-  /** Remove a single tag from an endpoint. */
-  removeTagFromEndpoint(tagId: string, agentGuid: string): Promise<void>;
-
-  /** Apply multiple tags to an endpoint in a single operation. */
-  applyTagsToEndpoint(tagIds: string[], agentGuid: string): Promise<void>;
+  /**
+   * Batch-update device tags (full replacement).
+   * POST /v3.0/asrm/attackSurfaceDevices/update
+   * Returns 207 multi-status with per-device results.
+   */
+  updateDeviceTags(updates: DeviceTagUpdate[]): Promise<DeviceTagUpdateResult[]>;
 }

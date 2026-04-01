@@ -2,13 +2,13 @@
  * Tag diff domain model.
  *
  * Represents the delta between desired tags (from VMware)
- * and current tags (on a Vision One endpoint).
+ * and current tags (on a Vision One device).
  */
 
-import { EndpointMatch } from './EndpointMatch';
+import { DeviceMatch } from './EndpointMatch';
 
 export interface TagDiff {
-  endpointMatch: EndpointMatch;
+  deviceMatch: DeviceMatch;
   tagsToAdd: string[];
   tagsToRemove: string[];
 }

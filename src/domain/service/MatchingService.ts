@@ -1,5 +1,5 @@
 /**
- * Pure domain service that matches VMware VMs to Vision One endpoints.
+ * Pure domain service that matches VMware VMs to Vision One devices.
  *
  * Supports multiple matching strategies (hostname, IP, compound, hostname-then-ip)
  * with configurable hostname normalization and IP match modes.
@@ -13,8 +13,8 @@ import {
   MatchConfidence,
 } from '../../shared/types';
 import { VmwareVm } from '../model/VmwareVm';
-import { VisionOneEndpoint } from '../model/VisionOneEndpoint';
-import { EndpointMatch } from '../model/EndpointMatch';
+import { VisionOneDevice } from '../model/VisionOneEndpoint';
+import { DeviceMatch } from '../model/EndpointMatch';
 
 export interface MatchingConfig {
   strategy: MatchStrategy;
@@ -25,7 +25,7 @@ export interface MatchingConfig {
 
 interface RawMatch {
   vm: VmwareVm;
-  endpoint: VisionOneEndpoint;
+  device: VisionOneDevice;
   matchedOn: MatchedOn;
   confidence: MatchConfidence;
 }
@@ -34,12 +34,12 @@ export class MatchingService {
   constructor(private readonly config: MatchingConfig) {}
 
   /**
-   * Match VMware VMs to Vision One endpoints using the configured strategy.
+   * Match VMware VMs to Vision One devices using the configured strategy.
    *
-   * @returns Array of endpoint matches with match metadata.
+   * @returns Array of device matches with match metadata.
    */
-  match(vms: VmwareVm[], endpoints: VisionOneEndpoint[]): EndpointMatch[] {
-    if (vms.length === 0 || endpoints.length === 0) {
+  match(vms: VmwareVm[], devices: VisionOneDevice[]): DeviceMatch[] {
+    if (vms.length === 0 || devices.length === 0) {
       return [];
     }
 
@@ -47,33 +47,33 @@ export class MatchingService {
 
     switch (this.config.strategy) {
       case 'hostname':
-        rawMatches = this.matchByHostname(vms, endpoints);
+        rawMatches = this.matchByHostname(vms, devices);
         break;
 
       case 'ip':
-        rawMatches = this.matchByIp(vms, endpoints);
+        rawMatches = this.matchByIp(vms, devices);
         break;
 
       case 'hostname-then-ip': {
-        const hostnameMatches = this.matchByHostname(vms, endpoints);
+        const hostnameMatches = this.matchByHostname(vms, devices);
 
         const matchedVmIds = new Set(hostnameMatches.map((m) => m.vm.vmId));
-        const matchedEndpointGuids = new Set(
-          hostnameMatches.map((m) => m.endpoint.agentGuid)
+        const matchedDeviceIds = new Set(
+          hostnameMatches.map((m) => m.device.id)
         );
 
         const unmatchedVms = vms.filter((vm) => !matchedVmIds.has(vm.vmId));
-        const unmatchedEndpoints = endpoints.filter(
-          (ep) => !matchedEndpointGuids.has(ep.agentGuid)
+        const unmatchedDevices = devices.filter(
+          (device) => !matchedDeviceIds.has(device.id)
         );
 
-        const ipMatches = this.matchByIp(unmatchedVms, unmatchedEndpoints);
+        const ipMatches = this.matchByIp(unmatchedVms, unmatchedDevices);
         rawMatches = [...hostnameMatches, ...ipMatches];
         break;
       }
 
       case 'compound':
-        rawMatches = this.matchByCompound(vms, endpoints);
+        rawMatches = this.matchByCompound(vms, devices);
         break;
 
       default:
@@ -81,25 +81,25 @@ export class MatchingService {
     }
 
     const resolved = this.resolveConflicts(rawMatches);
-    return resolved.map((m) => this.toEndpointMatch(m));
+    return resolved.map((m) => this.toDeviceMatch(m));
   }
 
   /**
-   * Match VMs to endpoints by hostname comparison.
+   * Match VMs to devices by hostname comparison.
    */
   private matchByHostname(
     vms: VmwareVm[],
-    endpoints: VisionOneEndpoint[]
+    devices: VisionOneDevice[]
   ): RawMatch[] {
     const matches: RawMatch[] = [];
 
-    const endpointsByHostname = new Map<string, VisionOneEndpoint[]>();
-    for (const ep of endpoints) {
-      const normalized = this.normalizeHostname(ep.endpointName);
+    const devicesByHostname = new Map<string, VisionOneDevice[]>();
+    for (const device of devices) {
+      const normalized = this.normalizeHostname(device.deviceName);
       if (!normalized) continue;
-      const existing = endpointsByHostname.get(normalized) ?? [];
-      existing.push(ep);
-      endpointsByHostname.set(normalized, existing);
+      const existing = devicesByHostname.get(normalized) ?? [];
+      existing.push(device);
+      devicesByHostname.set(normalized, existing);
     }
 
     for (const vm of vms) {
@@ -109,15 +109,15 @@ export class MatchingService {
       const normalizedVm = this.normalizeHostname(vmHostname);
       if (!normalizedVm) continue;
 
-      const matchedEndpoints = endpointsByHostname.get(normalizedVm);
-      if (!matchedEndpoints) continue;
+      const matchedDevices = devicesByHostname.get(normalizedVm);
+      if (!matchedDevices) continue;
 
-      const confidence = this.computeHostnameConfidence(vmHostname, matchedEndpoints);
+      const confidence = this.computeHostnameConfidence(vmHostname, matchedDevices);
 
-      for (const ep of matchedEndpoints) {
+      for (const device of matchedDevices) {
         matches.push({
           vm,
-          endpoint: ep,
+          device,
           matchedOn: 'hostname',
           confidence,
         });
@@ -128,24 +128,24 @@ export class MatchingService {
   }
 
   /**
-   * Match VMs to endpoints by IP address comparison.
+   * Match VMs to devices by IP address comparison.
    */
   private matchByIp(
     vms: VmwareVm[],
-    endpoints: VisionOneEndpoint[]
+    devices: VisionOneDevice[]
   ): RawMatch[] {
     const matches: RawMatch[] = [];
 
     for (const vm of vms) {
       if (vm.ipAddresses.length === 0) continue;
 
-      for (const ep of endpoints) {
-        if (ep.ipAddresses.length === 0) continue;
+      for (const device of devices) {
+        if (device.ipAddresses.length === 0) continue;
 
-        if (this.ipsOverlap(vm.ipAddresses, ep.ipAddresses)) {
+        if (this.ipsOverlap(vm.ipAddresses, device.ipAddresses)) {
           matches.push({
             vm,
-            endpoint: ep,
+            device,
             matchedOn: 'ip',
             confidence: 'exact',
           });
@@ -157,17 +157,17 @@ export class MatchingService {
   }
 
   /**
-   * Match VMs to endpoints requiring BOTH hostname AND IP to match.
+   * Match VMs to devices requiring BOTH hostname AND IP to match.
    */
   private matchByCompound(
     vms: VmwareVm[],
-    endpoints: VisionOneEndpoint[]
+    devices: VisionOneDevice[]
   ): RawMatch[] {
-    const hostnameMatches = this.matchByHostname(vms, endpoints);
-    const ipMatchSet = this.buildIpMatchSet(vms, endpoints);
+    const hostnameMatches = this.matchByHostname(vms, devices);
+    const ipMatchSet = this.buildIpMatchSet(vms, devices);
 
     return hostnameMatches.filter((m) => {
-      const key = `${m.vm.vmId}::${m.endpoint.agentGuid}`;
+      const key = `${m.vm.vmId}::${m.device.id}`;
       return ipMatchSet.has(key);
     }).map((m) => ({
       ...m,
@@ -176,20 +176,20 @@ export class MatchingService {
   }
 
   /**
-   * Build a set of "vmId::agentGuid" keys for all IP-matched pairs.
+   * Build a set of "vmId::deviceId" keys for all IP-matched pairs.
    */
   private buildIpMatchSet(
     vms: VmwareVm[],
-    endpoints: VisionOneEndpoint[]
+    devices: VisionOneDevice[]
   ): Set<string> {
     const set = new Set<string>();
 
     for (const vm of vms) {
       if (vm.ipAddresses.length === 0) continue;
-      for (const ep of endpoints) {
-        if (ep.ipAddresses.length === 0) continue;
-        if (this.ipsOverlap(vm.ipAddresses, ep.ipAddresses)) {
-          set.add(`${vm.vmId}::${ep.agentGuid}`);
+      for (const device of devices) {
+        if (device.ipAddresses.length === 0) continue;
+        if (this.ipsOverlap(vm.ipAddresses, device.ipAddresses)) {
+          set.add(`${vm.vmId}::${device.id}`);
         }
       }
     }
@@ -225,19 +225,19 @@ export class MatchingService {
   /**
    * Determine whether two sets of IPs overlap based on the configured IP match mode.
    */
-  private ipsOverlap(vmIps: string[], endpointIps: string[]): boolean {
+  private ipsOverlap(vmIps: string[], deviceIps: string[]): boolean {
     switch (this.config.ipMatchMode) {
       case 'primary': {
         const vmPrimary = vmIps[0];
-        const epPrimary = endpointIps[0];
+        const devicePrimary = deviceIps[0];
         return vmPrimary !== undefined &&
-               epPrimary !== undefined &&
-               vmPrimary === epPrimary;
+               devicePrimary !== undefined &&
+               vmPrimary === devicePrimary;
       }
 
       case 'any': {
-        const epIpSet = new Set(endpointIps);
-        return vmIps.some((ip) => epIpSet.has(ip));
+        const deviceIpSet = new Set(deviceIps);
+        return vmIps.some((ip) => deviceIpSet.has(ip));
       }
 
       default:
@@ -251,14 +251,14 @@ export class MatchingService {
    */
   private computeHostnameConfidence(
     vmHostname: string,
-    matchedEndpoints: VisionOneEndpoint[]
+    matchedDevices: VisionOneDevice[]
   ): MatchConfidence {
     if (this.config.hostnameNormalization === 'exact') {
       return 'exact';
     }
 
-    for (const ep of matchedEndpoints) {
-      if (ep.endpointName === vmHostname) {
+    for (const device of matchedDevices) {
+      if (device.deviceName === vmHostname) {
         return 'exact';
       }
     }
@@ -267,9 +267,9 @@ export class MatchingService {
   }
 
   /**
-   * Resolve conflicts when a VM or endpoint has multiple matches.
+   * Resolve conflicts when a VM or device has multiple matches.
    *
-   * If allowMultipleMatches is false, any VM or endpoint appearing in more
+   * If allowMultipleMatches is false, any VM or device appearing in more
    * than one match is considered ambiguous and all its matches are dropped.
    */
   private resolveConflicts(matches: RawMatch[]): RawMatch[] {
@@ -278,16 +278,16 @@ export class MatchingService {
     }
 
     const byVm = new Map<string, RawMatch[]>();
-    const byEndpoint = new Map<string, RawMatch[]>();
+    const byDevice = new Map<string, RawMatch[]>();
 
     for (const m of matches) {
       const vmGroup = byVm.get(m.vm.vmId) ?? [];
       vmGroup.push(m);
       byVm.set(m.vm.vmId, vmGroup);
 
-      const epGroup = byEndpoint.get(m.endpoint.agentGuid) ?? [];
-      epGroup.push(m);
-      byEndpoint.set(m.endpoint.agentGuid, epGroup);
+      const deviceGroup = byDevice.get(m.device.id) ?? [];
+      deviceGroup.push(m);
+      byDevice.set(m.device.id, deviceGroup);
     }
 
     const ambiguousVms = new Set<string>();
@@ -297,27 +297,27 @@ export class MatchingService {
       }
     }
 
-    const ambiguousEndpoints = new Set<string>();
-    for (const [agentGuid, group] of byEndpoint) {
+    const ambiguousDevices = new Set<string>();
+    for (const [deviceId, group] of byDevice) {
       if (group.length > 1) {
-        ambiguousEndpoints.add(agentGuid);
+        ambiguousDevices.add(deviceId);
       }
     }
 
     return matches.filter(
       (m) =>
         !ambiguousVms.has(m.vm.vmId) &&
-        !ambiguousEndpoints.has(m.endpoint.agentGuid)
+        !ambiguousDevices.has(m.device.id)
     );
   }
 
   /**
-   * Convert an internal RawMatch to the public EndpointMatch model.
+   * Convert an internal RawMatch to the public DeviceMatch model.
    */
-  private toEndpointMatch(raw: RawMatch): EndpointMatch {
+  private toDeviceMatch(raw: RawMatch): DeviceMatch {
     return {
       vmwareVm: raw.vm,
-      visionOneEndpoint: raw.endpoint,
+      visionOneDevice: raw.device,
       matchedOn: raw.matchedOn,
       confidence: raw.confidence,
     };

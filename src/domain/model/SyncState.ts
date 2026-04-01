@@ -1,13 +1,13 @@
 /**
  * Sync state domain models.
  *
- * Tracks which tags have been applied to which endpoints,
+ * Tracks which tags have been applied to which devices,
  * enabling incremental (delta) synchronization.
  */
 
 export interface SyncStateEntry {
   vmId: string;
-  agentGuid: string;
+  deviceId: string;
   lastSyncedTags: string[];
   lastSyncTimestamp: string;
   lastSyncHash: string;

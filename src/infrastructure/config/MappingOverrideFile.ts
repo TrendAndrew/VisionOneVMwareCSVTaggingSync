@@ -80,7 +80,7 @@ export class MappingOverrideFile implements MappingOverrideProvider {
     for (let i = 0; i < rawOverrides.length; i++) {
       const entry = rawOverrides[i];
       const vmId = entry.vmId as string | undefined;
-      const agentGuid = entry.agentGuid as string | undefined;
+      const deviceId = entry.deviceId as string | undefined;
 
       if (!vmId || typeof vmId !== 'string') {
         throw new Error(
@@ -88,19 +88,19 @@ export class MappingOverrideFile implements MappingOverrideProvider {
         );
       }
 
-      if (!agentGuid || typeof agentGuid !== 'string') {
+      if (!deviceId || typeof deviceId !== 'string') {
         throw new Error(
-          `Mapping override at index ${i} is missing a valid "agentGuid" string`
+          `Mapping override at index ${i} is missing a valid "deviceId" string`
         );
       }
 
       const override: MappingOverride = {
         vmId,
-        agentGuid,
+        deviceId,
         vmName: typeof entry.vmName === 'string' ? entry.vmName : undefined,
-        endpointName:
-          typeof entry.endpointName === 'string'
-            ? entry.endpointName
+        deviceName:
+          typeof entry.deviceName === 'string'
+            ? entry.deviceName
             : undefined,
         comment:
           typeof entry.comment === 'string' ? entry.comment : undefined,

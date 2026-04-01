@@ -1,13 +1,13 @@
 /**
  * Pure domain service that computes tag diffs between VMware VM tags
- * and Vision One endpoint tags.
+ * and Vision One device tags.
  *
  * Determines which tags need to be added or removed from each
- * endpoint to reach the desired state derived from VMware tags.
+ * device to reach the desired state derived from VMware tags.
  */
 
 import crypto from 'crypto';
-import { EndpointMatch } from '../model/EndpointMatch';
+import { DeviceMatch } from '../model/EndpointMatch';
 import { SyncStateEntry } from '../model/SyncState';
 import { TagDiff } from '../model/TagDiff';
 
@@ -35,30 +35,30 @@ export class DiffService {
   constructor(private readonly config: DiffConfig) {}
 
   /**
-   * Compute tag diffs for all matched endpoints.
+   * Compute tag diffs for all matched devices.
    *
    * For each match, compares the desired Vision One tag names (derived from
    * VMware tags) against the last-synced tags stored in sync state.
    * Returns only diffs where actual changes are needed.
    *
-   * @param matches - The matched VM-endpoint pairs.
-   * @param syncState - The last-known sync state keyed by agentGuid.
+   * @param matches - The matched VM-device pairs.
+   * @param syncState - The last-known sync state keyed by deviceId.
    * @param existingV1TagNames - Set of tag names that currently exist in Vision One.
-   * @param desiredTagsByAgentGuid - Pre-computed desired V1 tag names per agentGuid
+   * @param desiredTagsByDeviceId - Pre-computed desired V1 tag names per deviceId
    *        (produced by TagNamingService in application layer).
-   * @returns Array of TagDiff objects describing required changes per endpoint.
+   * @returns Array of TagDiff objects describing required changes per device.
    */
   computeDiffs(
-    matches: EndpointMatch[],
+    matches: DeviceMatch[],
     syncState: Map<string, SyncStateEntry>,
     existingV1TagNames: Set<string>,
-    desiredTagsByAgentGuid?: Map<string, string[]>
+    desiredTagsByDeviceId?: Map<string, string[]>
   ): TagDiff[] {
     const diffs: TagDiff[] = [];
 
     for (const match of matches) {
-      const agentGuid = match.visionOneEndpoint.agentGuid;
-      const desiredTags = desiredTagsByAgentGuid?.get(agentGuid)
+      const deviceId = match.visionOneDevice.id;
+      const desiredTags = desiredTagsByDeviceId?.get(deviceId)
         ?? this.deriveDesiredTags(match);
 
       const diff = this.computeSingleDiff(match, desiredTags, syncState);
@@ -88,12 +88,12 @@ export class DiffService {
    * Returns null if no changes are needed.
    */
   private computeSingleDiff(
-    match: EndpointMatch,
+    match: DeviceMatch,
     desiredTags: string[],
     syncState: Map<string, SyncStateEntry>
   ): TagDiff | null {
-    const agentGuid = match.visionOneEndpoint.agentGuid;
-    const entry = syncState.get(agentGuid);
+    const deviceId = match.visionOneDevice.id;
+    const entry = syncState.get(deviceId);
 
     // If sync state exists and hash hasn't changed, skip
     if (entry && !this.hasChanged(desiredTags, entry)) {
@@ -118,7 +118,7 @@ export class DiffService {
     }
 
     return {
-      endpointMatch: match,
+      deviceMatch: match,
       tagsToAdd,
       tagsToRemove,
     };
@@ -130,7 +130,7 @@ export class DiffService {
    * This is a fallback when pre-computed tag names are not provided.
    * Uses the VM tags that have a resolved categoryName.
    */
-  private deriveDesiredTags(match: EndpointMatch): string[] {
+  private deriveDesiredTags(match: DeviceMatch): string[] {
     return match.vmwareVm.tags
       .filter((t) => t.categoryName !== undefined)
       .map((t) => `${t.categoryName}/${t.name}`);

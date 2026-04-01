@@ -2,7 +2,7 @@
 
 One-way synchronization of VMware vSphere tags to Trend Vision One custom asset tags.
 
-VMware is the source of truth. Tags applied to VMs in vSphere are automatically replicated to matching endpoints in Vision One. Supports multiple vCenter hosts, admin mapping overrides, unmatched asset reporting, and live config reload via SIGHUP.
+VMware is the source of truth. Tags applied to VMs in vSphere are automatically replicated to matching devices in Vision One via the ASRM (Attack Surface Risk Management) API. Supports multiple vCenter hosts, admin mapping overrides, unmatched asset reporting, and live config reload via SIGHUP.
 
 > **Running on Windows?** See [docs/WINDOWS.md](docs/WINDOWS.md) for PowerShell scripts, setup instructions, and Windows Service configuration.
 
@@ -19,25 +19,25 @@ VMware is the source of truth. Tags applied to VMs in vSphere are automatically 
                     │         SyncOrchestrator              │
                     │                                       │
                     │  1. Fetch VMs + tags from all vCenters │
-                    │  2. Fetch endpoints from Vision One    │
+                    │  2. Fetch devices from Vision One ASRM │
                     │  3. Apply admin mapping overrides       │
                     │  4. Deterministic hostname/IP matching  │
-                    │  5. Compute tag diffs (add/remove)      │
-                    │  6. Create missing tags in Vision One   │
-                    │  7. Apply/remove tag assignments        │
+                    │  5. Resolve VMware tags → V1 tag IDs   │
+                    │  6. Compute tag diffs                   │
+                    │  7. Batch-update device tags            │
                     │  8. Write unmatched report              │
                     │  9. Persist sync state                  │
                     └──────┬──────────────────┬────────────┘
                            │                  │
               ┌────────────▼──────┐  ┌───────▼─────────────┐
               │  VMware vSphere    │  │  Trend Vision One    │
-              │  REST API          │  │  REST API            │
+              │  REST API          │  │  ASRM REST API       │
               │                    │  │                      │
-              │  /api/vcenter/vm   │  │  /v3.0/endpointSec/  │
-              │  /api/cis/tagging/ │  │    endpoints         │
-              │                    │  │  /v3.0/asrm/         │
-              │  Multi-vCenter:    │  │    attackSurface      │
-              │  DC1, DC2, ...     │  │    CustomTags         │
+              │  /api/vcenter/vm   │  │  /v3.0/asrm/         │
+              │  /api/cis/tagging/ │  │   attackSurfaceDevices│
+              │                    │  │   attackSurface       │
+              │  Multi-vCenter:    │  │    CustomTags         │
+              │  DC1, DC2, ...     │  │                      │
               └────────────────────┘  └──────────────────────┘
 ```
 
@@ -46,7 +46,7 @@ VMware is the source of truth. Tags applied to VMs in vSphere are automatically 
 ```
 src/
 ├── domain/                          # Pure business logic (no dependencies)
-│   ├── model/                       # Data interfaces (VmwareVm, VisionOneEndpoint, etc.)
+│   ├── model/                       # Data interfaces (VmwareVm, VisionOneDevice, etc.)
 │   ├── port/                        # Gateway interfaces (hexagonal architecture)
 │   └── service/                     # Matching, diffing, tag naming
 ├── application/                     # Orchestration
@@ -78,7 +78,7 @@ src/
 - Node.js 20+ (or Docker)
 - Network access to your vCenter server(s)
 - Network access to Trend Vision One API (`api.*.xdr.trendmicro.com`)
-- A Vision One API key with Endpoint Security and CREM permissions
+- A Vision One API key with **Dashboards & Reports > Reports > Configure and download + View** permissions
 
 ### 1. Clone and Install
 
@@ -118,9 +118,9 @@ DRY_RUN=true node dist/index.js --once
 
 This will:
 - Connect to VMware and Vision One
-- Match VMs to endpoints
-- Log what tags **would** be created/applied (without actually doing it)
-- Write `data/unmatched-report.txt` listing unmatched VMs and endpoints
+- Match VMs to devices
+- Log what tags **would** be applied (without actually doing it)
+- Write `data/unmatched-report.txt` listing unmatched VMs and devices
 
 ### 4. Review Unmatched Report
 
@@ -130,7 +130,7 @@ cat data/unmatched-report.txt
 
 The report shows:
 - Unmatched VMs with their hostname, IPs, and diagnostic reason
-- Unmatched endpoints
+- Unmatched devices
 - Suggested mapping override entries you can copy-paste
 
 ### 5. Add Manual Overrides (if needed)
@@ -143,8 +143,8 @@ Edit `config/mapping-overrides.json`:
     {
       "vmId": "vm-123",
       "vmName": "web-prod-01",
-      "agentGuid": "a1b2c3d4-e5f6-...",
-      "endpointName": "WEBPROD01",
+      "deviceId": "a1b2c3d4-e5f6-...",
+      "deviceName": "WEBPROD01",
       "comment": "Different naming convention in VMware vs Vision One"
     }
   ]
@@ -178,7 +178,7 @@ Configuration is loaded from two sources. Environment variables always take prec
 | `VMWARE_REQUEST_TIMEOUT_MS` | No | `30000` | vCenter API timeout (ms) |
 | `VISIONONE_API_TOKEN` | Yes | -- | Vision One API key (Bearer token) |
 | `VISIONONE_REGION` | Yes | -- | Vision One region: `us`, `eu`, `jp`, `sg`, `au`, `in`, `mea` |
-| `VISIONONE_ENDPOINT_PAGE_SIZE` | No | `200` | Endpoints per page |
+| `VISIONONE_DEVICE_PAGE_SIZE` | No | `200` | Devices per API page |
 | `VISIONONE_REQUEST_TIMEOUT_MS` | No | `30000` | Vision One API timeout (ms) |
 | `VISIONONE_RATE_LIMIT_DELAY_MS` | No | `100` | Delay between API calls (ms) |
 | `LOG_LEVEL` | No | `info` | `debug`, `info`, `warn`, `error` |
@@ -218,7 +218,7 @@ Configuration is loaded from two sources. Environment variables always take prec
     }
   },
   "visionone": {
-    "endpointPageSize": 200,
+    "devicePageSize": 200,
     "requestTimeoutMs": 30000,
     "rateLimitDelayMs": 100
   },
@@ -238,22 +238,22 @@ Configuration is loaded from two sources. Environment variables always take prec
 | Option | Default | Description |
 |--------|---------|-------------|
 | `intervalMinutes` | `15` | How often to run sync in continuous mode |
-| `removeOrphanedTags` | `false` | Remove Vision One tags when removed from VMware |
+| `removeOrphanedTags` | `false` | Remove Vision One tags when removed from VMware (within managed scope) |
 | `orphanRemovalAllowlistFile` | `null` | Path to JSON array of tag names eligible for removal |
 | `tagPrefix` | `vmware:` | Prefix for created Vision One tags (also used as removal scope) |
 | `categorySeparator` | `/` | Separator between category and tag name |
 | `maxTagNameLength` | `64` | Max tag name length (truncated with hash if exceeded) |
 
-**Tag naming example:** VMware category `Environment` with tag `Production` becomes Vision One custom tag `vmware:Environment/Production`.
+**Tag matching example:** VMware category `Environment` with tag `Production` is matched to a Vision One custom tag with `key: "Environment"` and `value: "Production"`. Tags must be pre-created in the Vision One console.
 
 #### Matching Settings
 
 | Option | Default | Description |
 |--------|---------|-------------|
-| `strategy` | `hostname-then-ip` | How to match VMs to endpoints |
+| `strategy` | `hostname-then-ip` | How to match VMs to devices |
 | `hostnameNormalization` | `lowercase-no-domain` | How to normalize hostnames for comparison |
 | `ipMatchMode` | `any` | IP matching mode |
-| `allowMultipleMatches` | `false` | Allow one VM to match multiple endpoints |
+| `allowMultipleMatches` | `false` | Allow one VM to match multiple devices |
 
 **Matching strategies:**
 
@@ -278,8 +278,9 @@ When `removeOrphanedTags` is `false` (default):
 - Tags are only ever added, never removed. This is the safe default to prevent accidental mass-untagging.
 
 When `removeOrphanedTags` is `true`:
-- If a tag is removed from a VM in VMware, it will be removed from the matching Vision One endpoint on the next sync cycle.
-- **Only VMware-managed tags are removed.** By default, removal is scoped to tags matching the configured `tagPrefix` (e.g., `vmware:`). Tags created outside this tool are never touched.
+- If a tag is removed from a VM in VMware, it will be removed from the matching Vision One device on the next sync cycle.
+- **Only VMware-managed tags are removed.** By default, removal is scoped to tags matching the configured `tagPrefix` (e.g., `vmware:`). Tags assigned outside this tool are never touched.
+- Because the Vision One API uses **full replacement** semantics (not add/remove), the tool preserves all non-managed tags when updating a device.
 
 For even more control, use an **orphan removal allowlist** -- a JSON file listing the exact tag names eligible for removal. Tags not in the list are never removed, even if they match the prefix:
 
@@ -351,18 +352,18 @@ Create or edit your config file (e.g., `config/default.json`):
 
 ## Mapping Overrides
 
-The mapping override file (`config/mapping-overrides.json`) lets administrators manually force VM-to-endpoint mappings. Overrides take precedence over automatic matching.
+The mapping override file (`config/mapping-overrides.json`) lets administrators manually force VM-to-device mappings. Overrides take precedence over automatic matching.
 
 ```json
 {
-  "description": "Manual VM-to-Endpoint mapping overrides",
+  "description": "Manual VM-to-Device mapping overrides",
   "overrides": [
     {
       "vmId": "vm-456",
       "vmName": "db-prod-03",
-      "agentGuid": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-      "endpointName": "DBPROD03",
-      "comment": "Hostname mismatch: VMware uses hyphens, V1 agent registered without"
+      "deviceId": "791986b4-0774-177a-01b4-73a0c6abb73b",
+      "deviceName": "DBPROD03",
+      "comment": "Hostname mismatch: VMware uses hyphens, V1 device registered without"
     }
   ]
 }
@@ -371,9 +372,9 @@ The mapping override file (`config/mapping-overrides.json`) lets administrators 
 | Field | Required | Description |
 |-------|----------|-------------|
 | `vmId` | Yes | VMware VM MoRef ID (e.g., `vm-123` or `dc1-vcenter::vm-123`) |
-| `agentGuid` | Yes | Vision One endpoint agent GUID |
+| `deviceId` | Yes | Vision One ASRM device ID (from `GET /v3.0/asrm/attackSurfaceDevices`) |
 | `vmName` | No | Human-readable VM name (documentation only) |
-| `endpointName` | No | Human-readable endpoint name (documentation only) |
+| `deviceName` | No | Human-readable device name (documentation only) |
 | `comment` | No | Admin note explaining the override |
 
 ### Live Reload
@@ -682,17 +683,66 @@ Create an ECS task definition with:
 | List tags | `GET /api/cis/tagging/tag` |
 | Bulk tag associations | `POST /api/cis/tagging/tag-association?action=list-attached-tags-on-objects` |
 
-### Trend Vision One REST API
+### Trend Vision One ASRM REST API
 
-| Operation | Endpoint |
-|-----------|----------|
-| List endpoints | `GET /v3.0/endpointSecurity/endpoints` |
-| List custom tags | `GET /v3.0/asrm/attackSurfaceCustomTags` |
-| Create custom tag | `POST /v3.0/asrm/attackSurfaceCustomTags` |
-| Apply tag to endpoint | `POST /v3.0/asrm/attackSurfaceCustomTags/{tagId}/endpoints` |
-| Remove tag from endpoint | `DELETE /v3.0/asrm/attackSurfaceCustomTags/{tagId}/endpoints/{agentGuid}` |
+| Operation | Method | Endpoint |
+|-----------|--------|----------|
+| List devices | `GET` | `/v3.0/asrm/attackSurfaceDevices` |
+| List custom tags | `GET` | `/v3.0/asrm/attackSurfaceCustomTags` |
+| Update device tags | `POST` | `/v3.0/asrm/attackSurfaceDevices/update` |
 
-**Note:** Tag write endpoints (create, apply, remove) are implemented based on API patterns but should be verified against the Vision One Automation Center documentation, which requires console login to access.
+**API key permissions required:** Dashboards & Reports > Reports > Configure and download + View
+
+#### Custom Tags (key-value pairs)
+
+Custom tags in Vision One are key-value pairs. They must be **pre-created in the Vision One console** before this tool can assign them. There is currently no public API to create custom tags programmatically.
+
+`GET /v3.0/asrm/attackSurfaceCustomTags` returns:
+
+```json
+{
+  "items": [
+    { "key": "Environment", "id": "qVQz+Y3HL1GQ56qTeSKhtFxYAIM=-01", "value": "Production" },
+    { "key": "Environment", "id": "qVQz+Y3HL1GQ56qTeSKhtFxYAIM=-02", "value": "Staging" },
+    { "key": "Role",        "id": "abc123...",                         "value": "Web" }
+  ],
+  "count": 3,
+  "totalCount": 3
+}
+```
+
+The tool matches VMware `category/tag` to Vision One `key/value`:
+- VMware category `Environment` with tag `Production` → Vision One tag with `key: "Environment"`, `value: "Production"`
+
+#### Updating Device Tags (full replacement)
+
+`POST /v3.0/asrm/attackSurfaceDevices/update` uses **full replacement** semantics — the `assetCustomTagIds` array replaces all tags on the device. The tool preserves non-managed tags by reading current tags, merging desired changes, and writing the full set.
+
+Request:
+```json
+[
+  { "id": "791986b4-0774-177a-01b4-73a0c6abb73b", "assetCustomTagIds": ["tagId1", "tagId2"] }
+]
+```
+
+Response (`207 Multi-Status`):
+```json
+[{ "status": 204 }]
+```
+
+**Limits:** Maximum 20 custom tags per device.
+
+#### Matching Logic (VMware VM → Vision One Device)
+
+Devices are matched by comparing VMware VM identifiers against Vision One ASRM device fields:
+
+| Priority | VMware field | Vision One field | Match type |
+|----------|-------------|-----------------|------------|
+| 1 | `guestHostname` | `deviceName` | Primary — OS-reported hostname |
+| 2 | `ipAddresses[]` | `ip[]` | Fallback — IP address overlap |
+| 3 | `name` | `deviceName` | Fallback — VM display name (if no guestHostname) |
+
+The matching strategy is configurable (see [Matching Settings](#matching-settings)).
 
 ### Vision One API Regions
 
@@ -708,7 +758,7 @@ Create an ECS task definition with:
 
 ### Vision One MCP Server
 
-Trend Micro provides an [official MCP server](https://github.com/trendmicro/vision-one-mcp-server) for Vision One. This project uses the REST API directly rather than the MCP server, as the MCP server currently only exposes read-only tag operations.
+Trend Micro provides an [official MCP server](https://github.com/trendmicro/vision-one-mcp-server) for Vision One. This project uses the REST API directly rather than the MCP server, as the MCP server currently only exposes read-only operations (`CREMListCustomTags`).
 
 ## Development
 
@@ -717,7 +767,7 @@ Trend Micro provides an [official MCP server](https://github.com/trendmicro/visi
 ```bash
 npm install
 npm run build      # Compile TypeScript
-npm test           # Run tests (61 unit tests)
+npm test           # Run tests (64 unit tests)
 npm run dev        # Run with tsx (no build step)
 ```
 

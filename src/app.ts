@@ -18,7 +18,6 @@ import { MappingOverrideFile } from './infrastructure/config/MappingOverrideFile
 import { UnmatchedReporter } from './infrastructure/logging/UnmatchedReporter';
 import { MatchingService } from './domain/service/MatchingService';
 import { DiffService } from './domain/service/DiffService';
-import { TagNamingService } from './domain/service/TagNamingService';
 import { SyncOrchestrator } from './application/SyncOrchestrator';
 import { SyncScheduler } from './application/SyncScheduler';
 import { DryRunDecorator } from './application/DryRunDecorator';
@@ -55,7 +54,7 @@ export function bootstrap(): AppContext {
   const v1Gateway = new VisionOneGatewayImpl(
     config.visionone.apiToken,
     config.visionone.region,
-    config.visionone.endpointPageSize,
+    config.visionone.devicePageSize,
     config.visionone.requestTimeoutMs,
     config.visionone.rateLimitDelayMs
   );
@@ -110,12 +109,6 @@ export function bootstrap(): AppContext {
     orphanRemovalAllowlist,
   });
 
-  const tagNamingService = new TagNamingService({
-    tagPrefix: config.sync.tagPrefix,
-    categorySeparator: config.sync.categorySeparator,
-    maxTagNameLength: config.sync.maxTagNameLength,
-  });
-
   // Unmatched report writer
   const unmatchedReporter = new UnmatchedReporter(
     './data/unmatched-report.json'
@@ -128,7 +121,6 @@ export function bootstrap(): AppContext {
     syncStateRepo,
     matchingService,
     diffService,
-    tagNamingService,
     mappingOverrides,
     unmatchedReporter,
     logger

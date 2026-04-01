@@ -1,7 +1,7 @@
 /**
  * Unmatched report writer.
  *
- * After each sync cycle, writes a report listing all VMs and endpoints
+ * After each sync cycle, writes a report listing all VMs and devices
  * that could not be matched. Produces both a machine-readable JSON file
  * and a human-readable TXT file that suggests mapping overrides.
  */
@@ -9,8 +9,8 @@
 import fs from 'fs/promises';
 import path from 'path';
 import { VmwareVm } from '../../domain/model/VmwareVm';
-import { VisionOneEndpoint } from '../../domain/model/VisionOneEndpoint';
-import { EndpointMatch } from '../../domain/model/EndpointMatch';
+import { VisionOneDevice } from '../../domain/model/VisionOneEndpoint';
+import { DeviceMatch } from '../../domain/model/EndpointMatch';
 
 export interface UnmatchedVmEntry {
   vmId: string;
@@ -22,19 +22,19 @@ export interface UnmatchedVmEntry {
   reason: string;
 }
 
-export interface UnmatchedEndpointEntry {
-  agentGuid: string;
-  endpointName: string;
+export interface UnmatchedDeviceEntry {
+  deviceId: string;
+  deviceName: string;
   ipAddresses: string[];
 }
 
 export interface UnmatchedReport {
   timestamp: string;
   unmatchedVms: UnmatchedVmEntry[];
-  unmatchedEndpoints: UnmatchedEndpointEntry[];
+  unmatchedDevices: UnmatchedDeviceEntry[];
   matchedCount: number;
   totalVms: number;
-  totalEndpoints: number;
+  totalDevices: number;
 }
 
 export class UnmatchedReporter {
@@ -43,21 +43,21 @@ export class UnmatchedReporter {
   ) {}
 
   /**
-   * Compute unmatched VMs and endpoints, then write JSON and TXT reports.
+   * Compute unmatched VMs and devices, then write JSON and TXT reports.
    *
    * @param allVms - All VMs fetched from VMware.
-   * @param allEndpoints - All endpoints fetched from Vision One.
-   * @param matches - Successfully matched VM-endpoint pairs.
+   * @param allDevices - All devices fetched from Vision One.
+   * @param matches - Successfully matched VM-device pairs.
    * @returns The unmatched report data.
    */
   async writeReport(
     allVms: VmwareVm[],
-    allEndpoints: VisionOneEndpoint[],
-    matches: EndpointMatch[]
+    allDevices: VisionOneDevice[],
+    matches: DeviceMatch[]
   ): Promise<UnmatchedReport> {
     const matchedVmIds = new Set(matches.map((m) => m.vmwareVm.vmId));
-    const matchedEndpointGuids = new Set(
-      matches.map((m) => m.visionOneEndpoint.agentGuid)
+    const matchedDeviceIds = new Set(
+      matches.map((m) => m.visionOneDevice.id)
     );
 
     const unmatchedVms: UnmatchedVmEntry[] = allVms
@@ -71,24 +71,24 @@ export class UnmatchedReporter {
         tags: vm.tags.map((t) =>
           t.categoryName ? `${t.categoryName}/${t.name}` : t.name
         ),
-        reason: this.diagnoseUnmatchedVm(vm, allEndpoints),
+        reason: this.diagnoseUnmatchedVm(vm, allDevices),
       }));
 
-    const unmatchedEndpoints: UnmatchedEndpointEntry[] = allEndpoints
-      .filter((ep) => !matchedEndpointGuids.has(ep.agentGuid))
-      .map((ep) => ({
-        agentGuid: ep.agentGuid,
-        endpointName: ep.endpointName,
-        ipAddresses: ep.ipAddresses,
+    const unmatchedDevices: UnmatchedDeviceEntry[] = allDevices
+      .filter((d) => !matchedDeviceIds.has(d.id))
+      .map((d) => ({
+        deviceId: d.id,
+        deviceName: d.deviceName,
+        ipAddresses: d.ipAddresses,
       }));
 
     const report: UnmatchedReport = {
       timestamp: new Date().toISOString(),
       unmatchedVms,
-      unmatchedEndpoints,
+      unmatchedDevices,
       matchedCount: matches.length,
       totalVms: allVms.length,
-      totalEndpoints: allEndpoints.length,
+      totalDevices: allDevices.length,
     };
 
     await this.ensureDirectory();
@@ -103,7 +103,7 @@ export class UnmatchedReporter {
    */
   private diagnoseUnmatchedVm(
     vm: VmwareVm,
-    allEndpoints: VisionOneEndpoint[]
+    allDevices: VisionOneDevice[]
   ): string {
     const hasHostname = vm.guestHostname !== null && vm.guestHostname !== '';
     const hasIps = vm.ipAddresses.length > 0;
@@ -124,23 +124,23 @@ export class UnmatchedReporter {
     const normalizedVm = (vm.guestHostname ?? vm.name)
       .split('.')[0]
       .toLowerCase();
-    const partialMatches = allEndpoints.filter((ep) => {
-      const normalizedEp = ep.endpointName.split('.')[0].toLowerCase();
+    const partialMatches = allDevices.filter((d) => {
+      const normalizedDev = d.deviceName.split('.')[0].toLowerCase();
       return (
-        normalizedEp.includes(normalizedVm) ||
-        normalizedVm.includes(normalizedEp)
+        normalizedDev.includes(normalizedVm) ||
+        normalizedVm.includes(normalizedDev)
       );
     });
 
     if (partialMatches.length > 0) {
       const names = partialMatches
         .slice(0, 3)
-        .map((ep) => ep.endpointName)
+        .map((d) => d.deviceName)
         .join(', ');
       return `Possible partial hostname matches found: ${names}`;
     }
 
-    return 'No matching endpoint found by hostname or IP';
+    return 'No matching device found by hostname or IP';
   }
 
   /**
@@ -163,16 +163,16 @@ export class UnmatchedReporter {
     const lines: string[] = [];
 
     lines.push('='.repeat(72));
-    lines.push('UNMATCHED VM & ENDPOINT REPORT');
+    lines.push('UNMATCHED VM & DEVICE REPORT');
     lines.push(`Generated: ${report.timestamp}`);
     lines.push('='.repeat(72));
     lines.push('');
     lines.push(
       `Summary: ${report.matchedCount} matched | ` +
         `${report.unmatchedVms.length} unmatched VMs | ` +
-        `${report.unmatchedEndpoints.length} unmatched endpoints | ` +
+        `${report.unmatchedDevices.length} unmatched devices | ` +
         `${report.totalVms} total VMs | ` +
-        `${report.totalEndpoints} total endpoints`
+        `${report.totalDevices} total devices`
     );
     lines.push('');
 
@@ -201,17 +201,17 @@ export class UnmatchedReporter {
       lines.push('');
     }
 
-    if (report.unmatchedEndpoints.length > 0) {
+    if (report.unmatchedDevices.length > 0) {
       lines.push('-'.repeat(72));
-      lines.push('UNMATCHED ENDPOINTS');
+      lines.push('UNMATCHED DEVICES');
       lines.push('-'.repeat(72));
 
-      for (const ep of report.unmatchedEndpoints) {
+      for (const d of report.unmatchedDevices) {
         lines.push('');
-        lines.push(`  Agent GUID: ${ep.agentGuid}`);
-        lines.push(`  Name:       ${ep.endpointName}`);
+        lines.push(`  Device ID: ${d.deviceId}`);
+        lines.push(`  Name:      ${d.deviceName}`);
         lines.push(
-          `  IPs:        ${ep.ipAddresses.length > 0 ? ep.ipAddresses.join(', ') : '(none)'}`
+          `  IPs:       ${d.ipAddresses.length > 0 ? d.ipAddresses.join(', ') : '(none)'}`
         );
       }
 
@@ -225,7 +225,7 @@ export class UnmatchedReporter {
       lines.push('-'.repeat(72));
       lines.push('');
       lines.push(
-        'To manually map unmatched VMs to endpoints, add entries to'
+        'To manually map unmatched VMs to devices, add entries to'
       );
       lines.push(
         'config/mapping-overrides.json in the "overrides" array:'
@@ -236,7 +236,7 @@ export class UnmatchedReporter {
         lines.push(`  {`);
         lines.push(`    "vmId": "${vm.vmId}",`);
         lines.push(`    "vmName": "${vm.name}",`);
-        lines.push(`    "agentGuid": "<PASTE_AGENT_GUID_HERE>",`);
+        lines.push(`    "deviceId": "<PASTE_DEVICE_ID_HERE>",`);
         lines.push(
           `    "comment": "Manual override for ${vm.name}"`
         );

@@ -46,7 +46,7 @@ export const configSchema = z.object({
           'Vision One region must be one of: us, eu, jp, sg, au, in, mea',
       }),
     }),
-    endpointPageSize: z.number().positive().default(200),
+    devicePageSize: z.number().positive().default(200),
     requestTimeoutMs: z.number().positive().default(30000),
     rateLimitDelayMs: z.number().nonnegative().default(100),
   }),

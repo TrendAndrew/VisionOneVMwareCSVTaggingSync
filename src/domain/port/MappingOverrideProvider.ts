@@ -1,7 +1,7 @@
 /**
  * Mapping override port.
  *
- * Allows administrators to manually force VM-to-endpoint mappings,
+ * Allows administrators to manually force VM-to-device mappings,
  * bypassing the automatic matching logic. Overrides take precedence
  * over any automatic match for the same VM.
  */
@@ -11,10 +11,10 @@ export interface MappingOverride {
   vmId: string;
   /** Optional human-readable VM name for documentation. */
   vmName?: string;
-  /** Vision One endpoint agent GUID. */
-  agentGuid: string;
-  /** Optional human-readable endpoint name for documentation. */
-  endpointName?: string;
+  /** Vision One ASRM device ID. */
+  deviceId: string;
+  /** Optional human-readable device name for documentation. */
+  deviceName?: string;
   /** Optional admin note explaining the override. */
   comment?: string;
 }

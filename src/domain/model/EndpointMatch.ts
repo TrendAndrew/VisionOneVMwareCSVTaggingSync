@@ -1,17 +1,17 @@
 /**
- * Endpoint match domain model.
+ * Device match domain model.
  *
  * Represents a successful match between a VMware VM and a
- * Vision One endpoint, including how the match was established.
+ * Vision One device, including how the match was established.
  */
 
 import { VmwareVm } from './VmwareVm';
-import { VisionOneEndpoint } from './VisionOneEndpoint';
+import { VisionOneDevice } from './VisionOneEndpoint';
 import { MatchedOn, MatchConfidence } from '../../shared/types';
 
-export interface EndpointMatch {
+export interface DeviceMatch {
   vmwareVm: VmwareVm;
-  visionOneEndpoint: VisionOneEndpoint;
+  visionOneDevice: VisionOneDevice;
   matchedOn: MatchedOn;
   confidence: MatchConfidence;
 }

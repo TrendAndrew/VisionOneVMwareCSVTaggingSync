@@ -1,6 +1,6 @@
 import { MatchingService, MatchingConfig } from '../../../src/domain/service/MatchingService';
 import { VmwareVm } from '../../../src/domain/model/VmwareVm';
-import { VisionOneEndpoint } from '../../../src/domain/model/VisionOneEndpoint';
+import { VisionOneDevice } from '../../../src/domain/model/VisionOneEndpoint';
 
 // ── helpers ──
 
@@ -15,15 +15,14 @@ function makeVm(partial: Partial<VmwareVm> & { vmId: string }): VmwareVm {
   };
 }
 
-function makeEndpoint(
-  partial: Partial<VisionOneEndpoint> & { agentGuid: string }
-): VisionOneEndpoint {
+function makeDevice(
+  partial: Partial<VisionOneDevice> & { id: string }
+): VisionOneDevice {
   return {
-    endpointName: partial.agentGuid,
-    displayName: partial.agentGuid,
+    deviceName: partial.id,
     ipAddresses: [],
     osName: 'Linux',
-    customTags: [],
+    assetCustomTagIds: [],
     ...partial,
   };
 }
@@ -46,11 +45,11 @@ describe('MatchingService', () => {
   describe('empty inputs', () => {
     it('should return empty array when vms is empty', () => {
       const svc = new MatchingService(defaultConfig());
-      const result = svc.match([], [makeEndpoint({ agentGuid: 'ep-1', endpointName: 'host' })]);
+      const result = svc.match([], [makeDevice({ id: 'dev-1', deviceName: 'host' })]);
       expect(result).toEqual([]);
     });
 
-    it('should return empty array when endpoints is empty', () => {
+    it('should return empty array when devices is empty', () => {
       const svc = new MatchingService(defaultConfig());
       const result = svc.match([makeVm({ vmId: 'vm-1', guestHostname: 'host' })], []);
       expect(result).toEqual([]);
@@ -66,15 +65,15 @@ describe('MatchingService', () => {
     it('should return empty when no hostnames overlap', () => {
       const svc = new MatchingService(defaultConfig({ strategy: 'hostname' }));
       const vms = [makeVm({ vmId: 'vm-1', guestHostname: 'alpha' })];
-      const eps = [makeEndpoint({ agentGuid: 'ep-1', endpointName: 'bravo' })];
-      expect(svc.match(vms, eps)).toEqual([]);
+      const devices = [makeDevice({ id: 'dev-1', deviceName: 'bravo' })];
+      expect(svc.match(vms, devices)).toEqual([]);
     });
 
     it('should return empty when no IPs overlap', () => {
       const svc = new MatchingService(defaultConfig({ strategy: 'ip' }));
       const vms = [makeVm({ vmId: 'vm-1', ipAddresses: ['10.0.0.1'] })];
-      const eps = [makeEndpoint({ agentGuid: 'ep-1', ipAddresses: ['10.0.0.2'] })];
-      expect(svc.match(vms, eps)).toEqual([]);
+      const devices = [makeDevice({ id: 'dev-1', ipAddresses: ['10.0.0.2'] })];
+      expect(svc.match(vms, devices)).toEqual([]);
     });
   });
 
@@ -86,9 +85,9 @@ describe('MatchingService', () => {
         defaultConfig({ strategy: 'hostname', hostnameNormalization: 'exact' })
       );
       const vms = [makeVm({ vmId: 'vm-1', guestHostname: 'WebServer' })];
-      const eps = [makeEndpoint({ agentGuid: 'ep-1', endpointName: 'WebServer' })];
+      const devices = [makeDevice({ id: 'dev-1', deviceName: 'WebServer' })];
 
-      const result = svc.match(vms, eps);
+      const result = svc.match(vms, devices);
 
       expect(result).toHaveLength(1);
       expect(result[0].matchedOn).toBe('hostname');
@@ -100,9 +99,9 @@ describe('MatchingService', () => {
         defaultConfig({ strategy: 'hostname', hostnameNormalization: 'exact' })
       );
       const vms = [makeVm({ vmId: 'vm-1', guestHostname: 'WebServer' })];
-      const eps = [makeEndpoint({ agentGuid: 'ep-1', endpointName: 'webserver' })];
+      const devices = [makeDevice({ id: 'dev-1', deviceName: 'webserver' })];
 
-      expect(svc.match(vms, eps)).toEqual([]);
+      expect(svc.match(vms, devices)).toEqual([]);
     });
 
     it('should match with lowercase normalization ignoring case', () => {
@@ -110,9 +109,9 @@ describe('MatchingService', () => {
         defaultConfig({ strategy: 'hostname', hostnameNormalization: 'lowercase' })
       );
       const vms = [makeVm({ vmId: 'vm-1', guestHostname: 'WebServer.Corp.Local' })];
-      const eps = [makeEndpoint({ agentGuid: 'ep-1', endpointName: 'webserver.corp.local' })];
+      const devices = [makeDevice({ id: 'dev-1', deviceName: 'webserver.corp.local' })];
 
-      const result = svc.match(vms, eps);
+      const result = svc.match(vms, devices);
 
       expect(result).toHaveLength(1);
       expect(result[0].matchedOn).toBe('hostname');
@@ -123,22 +122,22 @@ describe('MatchingService', () => {
         defaultConfig({ strategy: 'hostname', hostnameNormalization: 'lowercase-no-domain' })
       );
       const vms = [makeVm({ vmId: 'vm-1', guestHostname: 'DB-SERVER.corp.local' })];
-      const eps = [makeEndpoint({ agentGuid: 'ep-1', endpointName: 'db-server' })];
+      const devices = [makeDevice({ id: 'dev-1', deviceName: 'db-server' })];
 
-      const result = svc.match(vms, eps);
+      const result = svc.match(vms, devices);
 
       expect(result).toHaveLength(1);
       expect(result[0].confidence).toBe('normalized');
     });
 
-    it('should report exact confidence when raw hostname matches endpoint name', () => {
+    it('should report exact confidence when raw hostname matches device name', () => {
       const svc = new MatchingService(
         defaultConfig({ strategy: 'hostname', hostnameNormalization: 'lowercase-no-domain' })
       );
       const vms = [makeVm({ vmId: 'vm-1', guestHostname: 'web-server' })];
-      const eps = [makeEndpoint({ agentGuid: 'ep-1', endpointName: 'web-server' })];
+      const devices = [makeDevice({ id: 'dev-1', deviceName: 'web-server' })];
 
-      const result = svc.match(vms, eps);
+      const result = svc.match(vms, devices);
 
       expect(result).toHaveLength(1);
       expect(result[0].confidence).toBe('exact');
@@ -149,9 +148,9 @@ describe('MatchingService', () => {
         defaultConfig({ strategy: 'hostname', hostnameNormalization: 'lowercase-no-domain' })
       );
       const vms = [makeVm({ vmId: 'vm-1', name: 'APP-SERVER.corp.local', guestHostname: null })];
-      const eps = [makeEndpoint({ agentGuid: 'ep-1', endpointName: 'app-server' })];
+      const devices = [makeDevice({ id: 'dev-1', deviceName: 'app-server' })];
 
-      const result = svc.match(vms, eps);
+      const result = svc.match(vms, devices);
 
       expect(result).toHaveLength(1);
       expect(result[0].vmwareVm.vmId).toBe('vm-1');
@@ -166,9 +165,9 @@ describe('MatchingService', () => {
         defaultConfig({ strategy: 'ip', ipMatchMode: 'any' })
       );
       const vms = [makeVm({ vmId: 'vm-1', ipAddresses: ['10.0.0.1', '10.0.0.2'] })];
-      const eps = [makeEndpoint({ agentGuid: 'ep-1', ipAddresses: ['10.0.0.2', '10.0.0.3'] })];
+      const devices = [makeDevice({ id: 'dev-1', ipAddresses: ['10.0.0.2', '10.0.0.3'] })];
 
-      const result = svc.match(vms, eps);
+      const result = svc.match(vms, devices);
 
       expect(result).toHaveLength(1);
       expect(result[0].matchedOn).toBe('ip');
@@ -180,10 +179,10 @@ describe('MatchingService', () => {
         defaultConfig({ strategy: 'ip', ipMatchMode: 'primary' })
       );
       const vms = [makeVm({ vmId: 'vm-1', ipAddresses: ['10.0.0.1', '10.0.0.2'] })];
-      const eps = [makeEndpoint({ agentGuid: 'ep-1', ipAddresses: ['10.0.0.9', '10.0.0.1'] })];
+      const devices = [makeDevice({ id: 'dev-1', ipAddresses: ['10.0.0.9', '10.0.0.1'] })];
 
-      // primary mode: vm primary=10.0.0.1, ep primary=10.0.0.9 -> no match
-      expect(svc.match(vms, eps)).toEqual([]);
+      // primary mode: vm primary=10.0.0.1, device primary=10.0.0.9 -> no match
+      expect(svc.match(vms, devices)).toEqual([]);
     });
 
     it('should match when primary IPs are equal in "primary" mode', () => {
@@ -191,9 +190,9 @@ describe('MatchingService', () => {
         defaultConfig({ strategy: 'ip', ipMatchMode: 'primary' })
       );
       const vms = [makeVm({ vmId: 'vm-1', ipAddresses: ['10.0.0.5'] })];
-      const eps = [makeEndpoint({ agentGuid: 'ep-1', ipAddresses: ['10.0.0.5', '10.0.0.6'] })];
+      const devices = [makeDevice({ id: 'dev-1', ipAddresses: ['10.0.0.5', '10.0.0.6'] })];
 
-      const result = svc.match(vms, eps);
+      const result = svc.match(vms, devices);
 
       expect(result).toHaveLength(1);
     });
@@ -203,19 +202,19 @@ describe('MatchingService', () => {
         defaultConfig({ strategy: 'ip', ipMatchMode: 'any' })
       );
       const vms = [makeVm({ vmId: 'vm-1', ipAddresses: [] })];
-      const eps = [makeEndpoint({ agentGuid: 'ep-1', ipAddresses: ['10.0.0.1'] })];
+      const devices = [makeDevice({ id: 'dev-1', ipAddresses: ['10.0.0.1'] })];
 
-      expect(svc.match(vms, eps)).toEqual([]);
+      expect(svc.match(vms, devices)).toEqual([]);
     });
 
-    it('should skip endpoints with no IP addresses', () => {
+    it('should skip devices with no IP addresses', () => {
       const svc = new MatchingService(
         defaultConfig({ strategy: 'ip', ipMatchMode: 'any' })
       );
       const vms = [makeVm({ vmId: 'vm-1', ipAddresses: ['10.0.0.1'] })];
-      const eps = [makeEndpoint({ agentGuid: 'ep-1', ipAddresses: [] })];
+      const devices = [makeDevice({ id: 'dev-1', ipAddresses: [] })];
 
-      expect(svc.match(vms, eps)).toEqual([]);
+      expect(svc.match(vms, devices)).toEqual([]);
     });
   });
 
@@ -236,12 +235,12 @@ describe('MatchingService', () => {
         makeVm({ vmId: 'vm-1', guestHostname: 'host-a.corp.local', ipAddresses: ['10.0.0.1'] }),
         makeVm({ vmId: 'vm-2', guestHostname: 'unknown-host', ipAddresses: ['10.0.0.2'] }),
       ];
-      const eps = [
-        makeEndpoint({ agentGuid: 'ep-1', endpointName: 'host-a', ipAddresses: ['10.0.0.1'] }),
-        makeEndpoint({ agentGuid: 'ep-2', endpointName: 'other-name', ipAddresses: ['10.0.0.2'] }),
+      const devices = [
+        makeDevice({ id: 'dev-1', deviceName: 'host-a', ipAddresses: ['10.0.0.1'] }),
+        makeDevice({ id: 'dev-2', deviceName: 'other-name', ipAddresses: ['10.0.0.2'] }),
       ];
 
-      const result = svc.match(vms, eps);
+      const result = svc.match(vms, devices);
 
       expect(result).toHaveLength(2);
 
@@ -252,7 +251,7 @@ describe('MatchingService', () => {
       expect(ipMatch?.matchedOn).toBe('ip');
     });
 
-    it('should not re-match already hostname-matched endpoints by IP', () => {
+    it('should not re-match already hostname-matched devices by IP', () => {
       const svc = new MatchingService(
         defaultConfig({
           strategy: 'hostname-then-ip',
@@ -266,13 +265,13 @@ describe('MatchingService', () => {
         makeVm({ vmId: 'vm-1', guestHostname: 'server-a', ipAddresses: ['10.0.0.1'] }),
         makeVm({ vmId: 'vm-2', guestHostname: 'no-match', ipAddresses: ['10.0.0.1'] }),
       ];
-      const eps = [
-        makeEndpoint({ agentGuid: 'ep-1', endpointName: 'server-a', ipAddresses: ['10.0.0.1'] }),
+      const devices = [
+        makeDevice({ id: 'dev-1', deviceName: 'server-a', ipAddresses: ['10.0.0.1'] }),
       ];
 
-      const result = svc.match(vms, eps);
+      const result = svc.match(vms, devices);
 
-      // vm-1 matches by hostname; ep-1 is consumed so vm-2 cannot match by IP
+      // vm-1 matches by hostname; dev-1 is consumed so vm-2 cannot match by IP
       expect(result).toHaveLength(1);
       expect(result[0].vmwareVm.vmId).toBe('vm-1');
       expect(result[0].matchedOn).toBe('hostname');
@@ -296,15 +295,15 @@ describe('MatchingService', () => {
         makeVm({ vmId: 'vm-1', guestHostname: 'server-a.corp.local', ipAddresses: ['10.0.0.1'] }),
         makeVm({ vmId: 'vm-2', guestHostname: 'server-b', ipAddresses: ['10.0.0.2'] }),
       ];
-      const eps = [
-        makeEndpoint({ agentGuid: 'ep-1', endpointName: 'server-a', ipAddresses: ['10.0.0.1'] }),
-        makeEndpoint({ agentGuid: 'ep-2', endpointName: 'server-b', ipAddresses: ['10.0.0.99'] }),
+      const devices = [
+        makeDevice({ id: 'dev-1', deviceName: 'server-a', ipAddresses: ['10.0.0.1'] }),
+        makeDevice({ id: 'dev-2', deviceName: 'server-b', ipAddresses: ['10.0.0.99'] }),
       ];
 
-      const result = svc.match(vms, eps);
+      const result = svc.match(vms, devices);
 
-      // vm-1/ep-1: hostname matches AND IP matches -> included
-      // vm-2/ep-2: hostname matches BUT IP does NOT -> excluded
+      // vm-1/dev-1: hostname matches AND IP matches -> included
+      // vm-2/dev-2: hostname matches BUT IP does NOT -> excluded
       expect(result).toHaveLength(1);
       expect(result[0].matchedOn).toBe('both');
       expect(result[0].vmwareVm.vmId).toBe('vm-1');
@@ -321,9 +320,9 @@ describe('MatchingService', () => {
       );
 
       const vms = [makeVm({ vmId: 'vm-1', guestHostname: 'server-x', ipAddresses: ['10.0.0.1'] })];
-      const eps = [makeEndpoint({ agentGuid: 'ep-1', endpointName: 'server-x', ipAddresses: ['10.0.0.2'] })];
+      const devices = [makeDevice({ id: 'dev-1', deviceName: 'server-x', ipAddresses: ['10.0.0.2'] })];
 
-      expect(svc.match(vms, eps)).toEqual([]);
+      expect(svc.match(vms, devices)).toEqual([]);
     });
   });
 
@@ -339,20 +338,20 @@ describe('MatchingService', () => {
         })
       );
 
-      // Two endpoints with the same short hostname -> VM matches both -> ambiguous
+      // Two devices with the same short hostname -> VM matches both -> ambiguous
       const vms = [makeVm({ vmId: 'vm-1', guestHostname: 'server.corp.local' })];
-      const eps = [
-        makeEndpoint({ agentGuid: 'ep-1', endpointName: 'server.alpha.local' }),
-        makeEndpoint({ agentGuid: 'ep-2', endpointName: 'server.beta.local' }),
+      const devices = [
+        makeDevice({ id: 'dev-1', deviceName: 'server.alpha.local' }),
+        makeDevice({ id: 'dev-2', deviceName: 'server.beta.local' }),
       ];
 
-      const result = svc.match(vms, eps);
+      const result = svc.match(vms, devices);
 
       // vm-1 has two matches -> ambiguous VM -> all dropped
       expect(result).toEqual([]);
     });
 
-    it('should drop matches when an endpoint matches multiple VMs (allowMultipleMatches=false)', () => {
+    it('should drop matches when a device matches multiple VMs (allowMultipleMatches=false)', () => {
       const svc = new MatchingService(
         defaultConfig({
           strategy: 'hostname',
@@ -365,11 +364,11 @@ describe('MatchingService', () => {
         makeVm({ vmId: 'vm-1', guestHostname: 'server.alpha.local' }),
         makeVm({ vmId: 'vm-2', guestHostname: 'server.beta.local' }),
       ];
-      const eps = [makeEndpoint({ agentGuid: 'ep-1', endpointName: 'server' })];
+      const devices = [makeDevice({ id: 'dev-1', deviceName: 'server' })];
 
-      const result = svc.match(vms, eps);
+      const result = svc.match(vms, devices);
 
-      // ep-1 matches both vms -> ambiguous endpoint -> dropped
+      // dev-1 matches both vms -> ambiguous device -> dropped
       expect(result).toEqual([]);
     });
 
@@ -383,12 +382,12 @@ describe('MatchingService', () => {
       );
 
       const vms = [makeVm({ vmId: 'vm-1', guestHostname: 'server.corp.local' })];
-      const eps = [
-        makeEndpoint({ agentGuid: 'ep-1', endpointName: 'server.alpha.local' }),
-        makeEndpoint({ agentGuid: 'ep-2', endpointName: 'server.beta.local' }),
+      const devices = [
+        makeDevice({ id: 'dev-1', deviceName: 'server.alpha.local' }),
+        makeDevice({ id: 'dev-2', deviceName: 'server.beta.local' }),
       ];
 
-      const result = svc.match(vms, eps);
+      const result = svc.match(vms, devices);
 
       expect(result).toHaveLength(2);
     });
@@ -406,9 +405,9 @@ describe('MatchingService', () => {
       );
 
       const vms = [makeVm({ vmId: 'vm-1', name: 'MY-SERVER.corp.local', guestHostname: null })];
-      const eps = [makeEndpoint({ agentGuid: 'ep-1', endpointName: 'my-server' })];
+      const devices = [makeDevice({ id: 'dev-1', deviceName: 'my-server' })];
 
-      const result = svc.match(vms, eps);
+      const result = svc.match(vms, devices);
 
       expect(result).toHaveLength(1);
     });
@@ -420,7 +419,7 @@ describe('MatchingService', () => {
     // eslint-disable-next-line @typescript-eslint/no-var-requires
     const fixtureVms: VmwareVm[] = require('../../fixtures/vmware-vms.json');
     // eslint-disable-next-line @typescript-eslint/no-var-requires
-    const fixtureEps: VisionOneEndpoint[] = require('../../fixtures/visionone-endpoints.json');
+    const fixtureDevices: VisionOneDevice[] = require('../../fixtures/visionone-endpoints.json');
 
     it('should match expected pairs from fixture data using hostname strategy', () => {
       const svc = new MatchingService(
@@ -431,12 +430,12 @@ describe('MatchingService', () => {
         })
       );
 
-      const result = svc.match(fixtureVms, fixtureEps);
+      const result = svc.match(fixtureVms, fixtureDevices);
 
-      // vm-101 (web-server-01.corp.local) -> ep agent-001 (web-server-01)
-      // vm-102 (DB-SERVER-01.corp.local) -> ep agent-002 (db-server-01)
-      // vm-103 has null guestHostname, name is app-server-01 -> ep agent-003 (app-server-01)
-      // vm-104 (cache-server-01) -> ep agent-004 (cache-server-01)
+      // vm-101 (web-server-01.corp.local) -> device agent-001 (web-server-01)
+      // vm-102 (DB-SERVER-01.corp.local) -> device agent-002 (db-server-01)
+      // vm-103 has null guestHostname, name is app-server-01 -> device agent-003 (app-server-01)
+      // vm-104 (cache-server-01) -> device agent-004 (cache-server-01)
       // vm-105 (unmatched-vm.corp.local) -> no match
 
       const matchedVmIds = result.map((m) => m.vmwareVm.vmId).sort();

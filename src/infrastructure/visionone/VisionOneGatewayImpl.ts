@@ -1,50 +1,47 @@
 /**
- * Vision One gateway implementation using the Vision One REST API.
+ * Vision One gateway implementation using the ASRM REST API.
  *
  * Implements the VisionOneGateway port by translating domain
- * operations into Vision One API calls.
+ * operations into Vision One ASRM API calls.
  */
 
-import { VisionOneGateway } from '../../domain/port/VisionOneGateway';
-import { VisionOneEndpoint } from '../../domain/model/VisionOneEndpoint';
+import { VisionOneGateway, DeviceTagUpdate, DeviceTagUpdateResult } from '../../domain/port/VisionOneGateway';
+import { VisionOneDevice } from '../../domain/model/VisionOneEndpoint';
 import { VisionOneCustomTag } from '../../domain/model/VisionOneCustomTag';
 import { VisionOneRestClient } from './VisionOneRestClient';
 import { VisionOnePaginator } from './VisionOnePaginator';
 import { VisionOneApiError } from '../../shared/errors';
 
-/** Raw endpoint from GET /v3.0/endpointSecurity/endpoints */
-interface RawEndpoint {
-  agentGuid: string;
-  endpointName: string;
-  displayName?: string;
-  ip?: string;
-  ips?: string[];
+/** Raw device from GET /v3.0/asrm/attackSurfaceDevices */
+interface RawDevice {
+  id: string;
+  deviceName: string;
+  ip?: string[];
   osName?: string;
-  tags?: string[];
+  osPlatform?: string;
+  assetCustomTags?: string[];
 }
 
 /** Raw custom tag from GET /v3.0/asrm/attackSurfaceCustomTags */
 interface RawCustomTag {
   id: string;
-  name: string;
-  tagName?: string;
+  key: string;
+  value: string;
 }
 
-/** Response from POST /v3.0/asrm/attackSurfaceCustomTags */
-interface CreateTagResponse {
-  id: string;
-  name?: string;
-  tagName?: string;
+/** Per-item result in 207 multi-status response */
+interface UpdateResultItem {
+  status: number;
 }
 
 export class VisionOneGatewayImpl implements VisionOneGateway {
   private readonly client: VisionOneRestClient;
-  private readonly paginator: VisionOnePaginator<RawEndpoint>;
+  private readonly paginator: VisionOnePaginator<RawDevice>;
 
   constructor(
     apiToken: string,
     region: string,
-    endpointPageSize: number = 200,
+    devicePageSize: number = 200,
     requestTimeoutMs: number = 30000,
     rateLimitDelayMs: number = 100
   ) {
@@ -54,18 +51,18 @@ export class VisionOneGatewayImpl implements VisionOneGateway {
       requestTimeoutMs,
       rateLimitDelayMs
     );
-    this.paginator = new VisionOnePaginator<RawEndpoint>(
+    this.paginator = new VisionOnePaginator<RawDevice>(
       this.client,
-      endpointPageSize
+      devicePageSize
     );
   }
 
-  async listEndpoints(): Promise<VisionOneEndpoint[]> {
-    const rawEndpoints = await this.paginator.fetchAll(
-      '/v3.0/endpointSecurity/endpoints'
+  async listDevices(): Promise<VisionOneDevice[]> {
+    const rawDevices = await this.paginator.fetchAll(
+      '/v3.0/asrm/attackSurfaceDevices'
     );
 
-    return rawEndpoints.map((raw) => this.mapEndpoint(raw));
+    return rawDevices.map((raw) => this.mapDevice(raw));
   }
 
   async listCustomTags(): Promise<VisionOneCustomTag[]> {
@@ -79,113 +76,54 @@ export class VisionOneGatewayImpl implements VisionOneGateway {
 
     return items.map((raw: RawCustomTag) => ({
       tagId: raw.id,
-      tagName: raw.tagName ?? raw.name,
+      key: raw.key,
+      value: raw.value,
     }));
   }
 
-  async createCustomTag(name: string): Promise<VisionOneCustomTag> {
-    if (!name || name.trim().length === 0) {
-      throw new VisionOneApiError('Tag name must not be empty');
+  /**
+   * Batch-update device tags using full replacement semantics.
+   *
+   * POST /v3.0/asrm/attackSurfaceDevices/update
+   * Body: [{ "id": "<deviceId>", "assetCustomTagIds": ["tagId1", ...] }]
+   * Response: 207 with [{ "status": 204 }] per item
+   */
+  async updateDeviceTags(
+    updates: DeviceTagUpdate[]
+  ): Promise<DeviceTagUpdateResult[]> {
+    if (updates.length === 0) {
+      return [];
     }
 
-    const response = await this.client.post<CreateTagResponse>(
-      '/v3.0/asrm/attackSurfaceCustomTags',
-      { tagName: name }
+    const body = updates.map((u) => ({
+      id: u.deviceId,
+      assetCustomTagIds: u.assetCustomTagIds,
+    }));
+
+    const response = await this.client.post<UpdateResultItem[]>(
+      '/v3.0/asrm/attackSurfaceDevices/update',
+      body
     );
 
+    const results = Array.isArray(response) ? response : [];
+
+    return updates.map((u, i) => ({
+      deviceId: u.deviceId,
+      status: results[i]?.status ?? 500,
+      error:
+        results[i]?.status !== 204
+          ? `Device ${u.deviceId} tag update failed with status ${results[i]?.status ?? 'unknown'}`
+          : undefined,
+    }));
+  }
+
+  private mapDevice(raw: RawDevice): VisionOneDevice {
     return {
-      tagId: response.id,
-      tagName: response.tagName ?? response.name ?? name,
-    };
-  }
-
-  /**
-   * Apply a single tag to an endpoint.
-   *
-   * NOTE: The exact endpoint for tag application is not publicly
-   * documented in the Vision One API reference. The path below
-   * follows the most likely convention. Verify against the actual
-   * API documentation or sandbox before production use.
-   */
-  async applyTagToEndpoint(
-    tagId: string,
-    agentGuid: string
-  ): Promise<void> {
-    this.validateIds(tagId, agentGuid);
-
-    await this.client.patch<unknown>(
-      `/v3.0/endpointSecurity/endpoints/${encodeURIComponent(agentGuid)}/tags`,
-      { add: [tagId] }
-    );
-  }
-
-  /**
-   * Remove a single tag from an endpoint.
-   *
-   * NOTE: Exact endpoint needs verification against actual API.
-   * See applyTagToEndpoint comment above.
-   */
-  async removeTagFromEndpoint(
-    tagId: string,
-    agentGuid: string
-  ): Promise<void> {
-    this.validateIds(tagId, agentGuid);
-
-    await this.client.patch<unknown>(
-      `/v3.0/endpointSecurity/endpoints/${encodeURIComponent(agentGuid)}/tags`,
-      { remove: [tagId] }
-    );
-  }
-
-  /**
-   * Apply multiple tags to an endpoint in a single API call.
-   *
-   * NOTE: Exact endpoint needs verification against actual API.
-   * See applyTagToEndpoint comment above.
-   */
-  async applyTagsToEndpoint(
-    tagIds: string[],
-    agentGuid: string
-  ): Promise<void> {
-    if (!agentGuid) {
-      throw new VisionOneApiError('agentGuid must not be empty');
-    }
-
-    if (tagIds.length === 0) {
-      return;
-    }
-
-    await this.client.patch<unknown>(
-      `/v3.0/endpointSecurity/endpoints/${encodeURIComponent(agentGuid)}/tags`,
-      { add: tagIds }
-    );
-  }
-
-  private mapEndpoint(raw: RawEndpoint): VisionOneEndpoint {
-    const ipAddresses: string[] = [];
-
-    if (raw.ips && Array.isArray(raw.ips)) {
-      ipAddresses.push(...raw.ips);
-    } else if (raw.ip) {
-      ipAddresses.push(raw.ip);
-    }
-
-    return {
-      agentGuid: raw.agentGuid,
-      endpointName: raw.endpointName ?? '',
-      displayName: raw.displayName ?? raw.endpointName ?? '',
-      ipAddresses,
+      id: raw.id,
+      deviceName: raw.deviceName ?? '',
+      ipAddresses: raw.ip ?? [],
       osName: raw.osName ?? '',
-      customTags: raw.tags ?? [],
+      assetCustomTagIds: raw.assetCustomTags ?? [],
     };
-  }
-
-  private validateIds(tagId: string, agentGuid: string): void {
-    if (!tagId) {
-      throw new VisionOneApiError('tagId must not be empty');
-    }
-    if (!agentGuid) {
-      throw new VisionOneApiError('agentGuid must not be empty');
-    }
   }
 }

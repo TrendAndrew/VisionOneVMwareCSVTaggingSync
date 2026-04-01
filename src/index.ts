@@ -19,7 +19,7 @@ if (args.includes('--once')) {
     .then((result) => {
       logger.info('Single sync complete', {
         matched: result.matchedCount,
-        tagsApplied: result.tagsApplied,
+        devicesUpdated: result.devicesUpdated,
         errors: result.errors.length,
         durationMs: result.durationMs,
       });
