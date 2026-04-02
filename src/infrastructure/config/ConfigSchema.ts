@@ -57,7 +57,7 @@ export const configSchema = z.object({
       batchSize: z.number().min(1).default(50),
       maxRetries: z.number().nonnegative().default(3),
       retryDelayMs: z.number().nonnegative().default(2000),
-      removeOrphanedTags: z.boolean().default(false),
+      removeOrphanedTags: z.boolean().default(true),
       /**
        * File path to a JSON array of exact tag names eligible for orphan removal.
        * When set, only tags in this file can be removed -- everything else is

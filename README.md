@@ -228,7 +228,7 @@ Configuration is loaded from two sources. Environment variables always take prec
     "batchSize": 50,
     "maxRetries": 3,
     "retryDelayMs": 2000,
-    "removeOrphanedTags": false,
+    "removeOrphanedTags": true,
     "orphanRemovalAllowlistFile": null,
     "tagPrefix": "vmware:",
     "categorySeparator": "/",
@@ -270,7 +270,7 @@ Configuration is loaded from two sources. Environment variables always take prec
 | Option | Default | Description |
 |--------|---------|-------------|
 | `intervalMinutes` | `15` | How often to run sync in continuous mode |
-| `removeOrphanedTags` | `false` | Remove Vision One tags when removed from VMware (within managed scope) |
+| `removeOrphanedTags` | `true` | Remove Vision One tags when removed from VMware (within managed scope) |
 | `orphanRemovalAllowlistFile` | `null` | Path to JSON array of tag names eligible for removal |
 | `tagPrefix` | `vmware:` | Prefix for created Vision One tags (also used as removal scope) |
 | `categorySeparator` | `/` | Separator between category and tag name |
@@ -306,10 +306,10 @@ Configuration is loaded from two sources. Environment variables always take prec
 
 #### Tag Removal
 
-When `removeOrphanedTags` is `false` (default):
-- Tags are only ever added, never removed. This is the safe default to prevent accidental mass-untagging.
+When `removeOrphanedTags` is `false`:
+- Tags are only ever added, never removed.
 
-When `removeOrphanedTags` is `true`:
+When `removeOrphanedTags` is `true` (default):
 - If a tag is removed from a VM in VMware, it will be removed from the matching Vision One device on the next sync cycle.
 - **Only VMware-managed tags are removed.** By default, removal is scoped to tags matching the configured `tagPrefix` (e.g., `vmware:`). Tags assigned outside this tool are never touched.
 - Because the Vision One API uses **full replacement** semantics (not add/remove), the tool preserves all non-managed tags when updating a device.
@@ -341,9 +341,9 @@ Where `config/removal-allowlist.json` is a flat JSON array of tag names:
 
 | Scenario | Behaviour |
 |----------|-----------|
-| `removeOrphanedTags: false` | Never removes anything (default) |
-| `removeOrphanedTags: true` (no allowlist) | Removes orphans matching `tagPrefix` only |
+| `removeOrphanedTags: true` (no allowlist) | Removes orphans matching `tagPrefix` only (default) |
 | `removeOrphanedTags: true` + allowlist file | Removes only orphans listed in the file |
+| `removeOrphanedTags: false` | Never removes anything |
 
 ## Multi-vCenter Support
 
