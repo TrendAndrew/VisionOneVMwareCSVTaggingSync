@@ -15,6 +15,7 @@ import {
 import { VmwareVm } from '../model/VmwareVm';
 import { VisionOneDevice } from '../model/VisionOneEndpoint';
 import { DeviceMatch } from '../model/EndpointMatch';
+import { Logger } from '../port/Logger';
 
 export interface MatchingConfig {
   strategy: MatchStrategy;
@@ -31,7 +32,10 @@ interface RawMatch {
 }
 
 export class MatchingService {
-  constructor(private readonly config: MatchingConfig) {}
+  constructor(
+    private readonly config: MatchingConfig,
+    private readonly logger?: Logger
+  ) {}
 
   /**
    * Match VMware VMs to Vision One devices using the configured strategy.
@@ -42,6 +46,8 @@ export class MatchingService {
     if (vms.length === 0 || devices.length === 0) {
       return [];
     }
+
+    this.logger?.debug('Starting VM-to-device matching', { vmCount: vms.length, deviceCount: devices.length, strategy: this.config.strategy });
 
     let rawMatches: RawMatch[];
 
@@ -56,6 +62,7 @@ export class MatchingService {
 
       case 'hostname-then-ip': {
         const hostnameMatches = this.matchByHostname(vms, devices);
+        this.logger?.debug('Hostname matching complete', { matches: hostnameMatches.length });
 
         const matchedVmIds = new Set(hostnameMatches.map((m) => m.vm.vmId));
         const matchedDeviceIds = new Set(
@@ -68,6 +75,7 @@ export class MatchingService {
         );
 
         const ipMatches = this.matchByIp(unmatchedVms, unmatchedDevices);
+        this.logger?.debug('IP fallback matching complete', { ipMatches: ipMatches.length, remainingVms: unmatchedVms.length, remainingDevices: unmatchedDevices.length });
         rawMatches = [...hostnameMatches, ...ipMatches];
         break;
       }
@@ -81,6 +89,13 @@ export class MatchingService {
     }
 
     const resolved = this.resolveConflicts(rawMatches);
+
+    if (resolved.length < rawMatches.length) {
+      this.logger?.warn('Ambiguous matches dropped during conflict resolution', { before: rawMatches.length, after: resolved.length, dropped: rawMatches.length - resolved.length });
+    }
+
+    this.logger?.debug('Matching complete', { totalMatches: resolved.length });
+
     return resolved.map((m) => this.toDeviceMatch(m));
   }
 
@@ -115,6 +130,7 @@ export class MatchingService {
       const confidence = this.computeHostnameConfidence(vmHostname, matchedDevices);
 
       for (const device of matchedDevices) {
+        this.logger?.debug('Hostname match', { vmHostname: normalizedVm, deviceName: device.deviceName, vmId: vm.vmId, deviceId: device.id, confidence });
         matches.push({
           vm,
           device,
@@ -143,6 +159,7 @@ export class MatchingService {
         if (device.ipAddresses.length === 0) continue;
 
         if (this.ipsOverlap(vm.ipAddresses, device.ipAddresses)) {
+          this.logger?.warn('IP-only match (no hostname match available)', { vmId: vm.vmId, vmName: vm.guestHostname ?? vm.name, deviceId: device.id, deviceName: device.deviceName, matchedIp: vm.ipAddresses.filter(ip => device.ipAddresses.includes(ip)) });
           matches.push({
             vm,
             device,
@@ -294,6 +311,7 @@ export class MatchingService {
     for (const [vmId, group] of byVm) {
       if (group.length > 1) {
         ambiguousVms.add(vmId);
+        this.logger?.warn('Ambiguous VM match dropped (matched multiple devices)', { vmId, matchCount: group.length, deviceIds: group.map(m => m.device.id) });
       }
     }
 
@@ -301,6 +319,7 @@ export class MatchingService {
     for (const [deviceId, group] of byDevice) {
       if (group.length > 1) {
         ambiguousDevices.add(deviceId);
+        this.logger?.warn('Ambiguous device match dropped (matched multiple VMs)', { deviceId, matchCount: group.length, vmIds: group.map(m => m.vm.vmId) });
       }
     }
 

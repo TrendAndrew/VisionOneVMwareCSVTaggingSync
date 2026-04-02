@@ -80,7 +80,8 @@ export class MappingOverrideFile implements MappingOverrideProvider {
     for (let i = 0; i < rawOverrides.length; i++) {
       const entry = rawOverrides[i];
       const vmId = entry.vmId as string | undefined;
-      const deviceId = entry.deviceId as string | undefined;
+      // deviceId can be null (suppresses unmatched warnings) or a non-empty string
+      const deviceId = entry.deviceId as string | null | undefined;
 
       if (!vmId || typeof vmId !== 'string') {
         throw new Error(
@@ -88,9 +89,15 @@ export class MappingOverrideFile implements MappingOverrideProvider {
         );
       }
 
-      if (!deviceId || typeof deviceId !== 'string') {
+      if (deviceId === undefined) {
         throw new Error(
-          `Mapping override at index ${i} is missing a valid "deviceId" string`
+          `Mapping override at index ${i} is missing a "deviceId" field (use null to suppress warnings)`
+        );
+      }
+
+      if (deviceId !== null && (typeof deviceId !== 'string' || deviceId.trim() === '')) {
+        throw new Error(
+          `Mapping override at index ${i} has invalid "deviceId" — must be a non-empty string or null`
         );
       }
 

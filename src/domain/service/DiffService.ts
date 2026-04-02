@@ -52,7 +52,8 @@ export class DiffService {
     matches: DeviceMatch[],
     syncState: Map<string, SyncStateEntry>,
     existingV1TagNames: Set<string>,
-    desiredTagsByDeviceId?: Map<string, string[]>
+    desiredTagsByDeviceId?: Map<string, string[]>,
+    liveTagNamesByDeviceId?: Map<string, string[]>
   ): TagDiff[] {
     const diffs: TagDiff[] = [];
 
@@ -60,8 +61,9 @@ export class DiffService {
       const deviceId = match.visionOneDevice.id;
       const desiredTags = desiredTagsByDeviceId?.get(deviceId)
         ?? this.deriveDesiredTags(match);
+      const liveTags = liveTagNamesByDeviceId?.get(deviceId);
 
-      const diff = this.computeSingleDiff(match, desiredTags, syncState);
+      const diff = this.computeSingleDiff(match, desiredTags, syncState, liveTags);
       if (diff !== null) {
         diffs.push(diff);
       }
@@ -86,14 +88,57 @@ export class DiffService {
   /**
    * Compute the diff for a single match.
    * Returns null if no changes are needed.
+   *
+   * When liveTags is provided, the diff is computed against the actual
+   * device state so that manual drift in Vision One is detected and
+   * corrected. The sync state is still consulted to know which tags
+   * we manage (for orphan removal decisions).
    */
   private computeSingleDiff(
     match: DeviceMatch,
     desiredTags: string[],
-    syncState: Map<string, SyncStateEntry>
+    syncState: Map<string, SyncStateEntry>,
+    liveTags?: string[]
   ): TagDiff | null {
     const deviceId = match.visionOneDevice.id;
     const entry = syncState.get(deviceId);
+
+    if (liveTags !== undefined) {
+      // ── Live-state-aware diff ──
+      const liveSet = new Set(liveTags);
+      const desiredSet = new Set(desiredTags);
+
+      // Skip check: desired matches both live state AND sync state hash
+      const desiredHash = this.computeTagHash(desiredTags);
+      const liveMatchesDesired = desiredTags.length === liveTags.length
+        && desiredTags.every((t) => liveSet.has(t));
+      const syncHashMatches = entry !== undefined && desiredHash === entry.lastSyncHash;
+
+      if (liveMatchesDesired && syncHashMatches) {
+        return null;
+      }
+
+      // tagsToAdd: desired tags not currently on the live device
+      const tagsToAdd = desiredTags.filter((tag) => !liveSet.has(tag));
+
+      // tagsToRemove: tags WE manage (in sync state) that are no longer
+      // desired AND are still present on the live device
+      let tagsToRemove: string[] = [];
+      if (this.config.removeOrphanedTags && entry) {
+        tagsToRemove = entry.lastSyncedTags
+          .filter((tag) => !desiredSet.has(tag))
+          .filter((tag) => liveSet.has(tag))
+          .filter((tag) => this.isEligibleForRemoval(tag));
+      }
+
+      if (tagsToAdd.length === 0 && tagsToRemove.length === 0) {
+        return null;
+      }
+
+      return { deviceMatch: match, tagsToAdd, tagsToRemove };
+    }
+
+    // ── Fallback: sync-state-only diff (backward compatible) ──
 
     // If sync state exists and hash hasn't changed, skip
     if (entry && !this.hasChanged(desiredTags, entry)) {

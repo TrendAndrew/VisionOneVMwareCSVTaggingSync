@@ -90,10 +90,15 @@ export class SyncOrchestrator {
       });
 
       // Step 3: Apply mapping overrides first (highest priority)
-      const overrideMatches = this.applyOverrides(vms, devices);
+      const { matches: overrideMatches, suppressedVmIds } = this.applyOverrides(vms, devices);
       if (overrideMatches.length > 0) {
         this.logger.info('Mapping overrides applied', {
           overrideCount: overrideMatches.length,
+        });
+      }
+      if (suppressedVmIds.size > 0) {
+        this.logger.info('VMs suppressed by mapping overrides', {
+          suppressedCount: suppressedVmIds.size,
         });
       }
 
@@ -105,8 +110,9 @@ export class SyncOrchestrator {
         overrideMatches.map((m) => m.visionOneDevice.id)
       );
 
+      // Filter out both override-matched and suppressed VMs
       const remainingVms = vms.filter(
-        (vm) => !overrideVmIds.has(vm.vmId)
+        (vm) => !overrideVmIds.has(vm.vmId) && !suppressedVmIds.has(vm.vmId)
       );
       const remainingDevices = devices.filter(
         (d) => !overrideDeviceIds.has(d.id)
@@ -125,9 +131,10 @@ export class SyncOrchestrator {
         totalMatches: allMatches.length,
       });
 
-      // Step 5: Write unmatched report
+      // Step 5: Write unmatched report (exclude suppressed VMs)
+      const vmsForReport = vms.filter(vm => !suppressedVmIds.has(vm.vmId));
       const report = await this.unmatchedReporter.writeReport(
-        vms,
+        vmsForReport,
         devices,
         allMatches
       );
@@ -179,16 +186,33 @@ export class SyncOrchestrator {
         desiredTagNamesByDeviceId.set(device.id, tagNames);
       }
 
-      // Step 7: Compute diffs against sync state
+      // Step 7: Compute diffs against live device state
       const existingTagNames = new Set<string>();
       for (const tag of existingTags) {
         existingTagNames.add(`${tag.key}/${tag.value}`);
       }
+
+      // Build reverse lookup: tagId -> "key/value" name
+      const tagIdToName = new Map<string, string>();
+      for (const tag of existingTags) {
+        tagIdToName.set(tag.tagId, `${tag.key}/${tag.value}`);
+      }
+
+      // Build live tag names per device from current assetCustomTagIds
+      const liveTagNamesByDeviceId = new Map<string, string[]>();
+      for (const device of devices) {
+        const names = device.assetCustomTagIds
+          .map(id => tagIdToName.get(id))
+          .filter((name): name is string => name !== undefined);
+        liveTagNamesByDeviceId.set(device.id, names);
+      }
+
       const diffs = this.diffService.computeDiffs(
         allMatches,
         syncState.entries,
         existingTagNames,
-        desiredTagNamesByDeviceId
+        desiredTagNamesByDeviceId,
+        liveTagNamesByDeviceId
       );
 
       this.logger.info('Diffs computed', { diffCount: diffs.length });
@@ -198,7 +222,6 @@ export class SyncOrchestrator {
 
       for (const diff of diffs) {
         const device = diff.deviceMatch.visionOneDevice;
-        const desiredIds = desiredTagIdsByDeviceId.get(device.id) ?? [];
 
         // Start with current non-managed tag IDs (preserve tags we don't manage)
         const currentTagIds = new Set(device.assetCustomTagIds);
@@ -232,6 +255,16 @@ export class SyncOrchestrator {
           });
           finalTagIds.length = 20;
         }
+
+        // Log detailed diff for visibility (especially useful in dry-run mode)
+        this.logger.info('Tag update planned', {
+          deviceId: device.id,
+          deviceName: device.deviceName,
+          vmName: diff.deviceMatch.vmwareVm.name,
+          tagsToAdd: diff.tagsToAdd,
+          tagsToRemove: diff.tagsToRemove,
+          finalTagCount: finalTagIds.length,
+        });
 
         updates.push({ deviceId: device.id, assetCustomTagIds: finalTagIds });
       }
@@ -346,8 +379,9 @@ export class SyncOrchestrator {
   private applyOverrides(
     vms: VmwareVm[],
     devices: VisionOneDevice[]
-  ): DeviceMatch[] {
+  ): { matches: DeviceMatch[]; suppressedVmIds: Set<string> } {
     const matches: DeviceMatch[] = [];
+    const suppressedVmIds = new Set<string>();
     const deviceMap = new Map(
       devices.map((d) => [d.id, d])
     );
@@ -355,6 +389,17 @@ export class SyncOrchestrator {
     for (const vm of vms) {
       const override = this.mappingOverrides.getOverride(vm.vmId);
       if (!override) {
+        continue;
+      }
+
+      // null deviceId means "suppress this VM from matching and unmatched reports"
+      if (override.deviceId === null) {
+        suppressedVmIds.add(vm.vmId);
+        this.logger.debug('VM suppressed by mapping override (deviceId: null)', {
+          vmId: vm.vmId,
+          vmName: vm.name,
+          comment: override.comment,
+        });
         continue;
       }
 
@@ -375,6 +420,6 @@ export class SyncOrchestrator {
       });
     }
 
-    return matches;
+    return { matches, suppressedVmIds };
   }
 }

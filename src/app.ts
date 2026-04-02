@@ -81,7 +81,7 @@ export function bootstrap(): AppContext {
     hostnameNormalization: config.matching.hostnameNormalization,
     ipMatchMode: config.matching.ipMatchMode,
     allowMultipleMatches: config.matching.allowMultipleMatches,
-  });
+  }, logger);
 
   // Load orphan removal allowlist if configured
   let orphanRemovalAllowlist: Set<string> | undefined;

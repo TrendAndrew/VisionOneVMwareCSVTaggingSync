@@ -11,8 +11,8 @@ export interface MappingOverride {
   vmId: string;
   /** Optional human-readable VM name for documentation. */
   vmName?: string;
-  /** Vision One ASRM device ID. */
-  deviceId: string;
+  /** Vision One ASRM device ID, or null to suppress unmatched warnings for this VM. */
+  deviceId: string | null;
   /** Optional human-readable device name for documentation. */
   deviceName?: string;
   /** Optional admin note explaining the override. */

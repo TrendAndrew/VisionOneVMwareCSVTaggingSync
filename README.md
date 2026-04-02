@@ -110,30 +110,54 @@ LOG_LEVEL=info
 DRY_RUN=false
 ```
 
-### 3. Dry Run (Recommended First Step)
+### 3. Pre-create Tags in Vision One
+
+Before running, create custom tags in the Vision One console that match your VMware categories and tags. For example, if VMware has category `Environment` with tag `Production`, create a Vision One custom tag with key `Environment` and value `Production`.
+
+> **Note:** There is currently no public API to create custom tags programmatically. Tags must be created via the Vision One console under Attack Surface Risk Management.
+
+### 4. Dry Run (Recommended First Step)
 
 ```bash
 DRY_RUN=true node dist/index.js --once
 ```
 
-This will:
-- Connect to VMware and Vision One
-- Match VMs to devices
-- Log what tags **would** be applied (without actually doing it)
-- Write `data/unmatched-report.txt` listing unmatched VMs and devices
+This executes the **full sync pipeline** without making any changes to Vision One:
 
-### 4. Review Unmatched Report
+1. Connects to VMware and fetches all VMs with their tags
+2. Connects to Vision One and fetches all ASRM devices and custom tags
+3. Runs the complete matching pipeline (overrides → hostname → IP fallback)
+4. Resolves VMware category/tag pairs to Vision One tag IDs
+5. Computes tag diffs (what would be added/removed per device)
+6. **Logs every planned change** instead of applying it
+7. Writes `data/unmatched-report.txt` with full diagnostics
+
+For maximum detail, combine with debug logging:
+
+```bash
+DRY_RUN=true LOG_LEVEL=debug node dist/index.js --once
+```
+
+This adds:
+- Every hostname match with confidence level
+- IP-only matches (logged as warnings for review)
+- Ambiguous match conflicts and how they were resolved
+- Suppressed VMs from mapping overrides
+- Per-device tag update plans (tags to add, remove, final count)
+
+### 5. Review Unmatched Report
 
 ```bash
 cat data/unmatched-report.txt
 ```
 
-The report shows:
-- Unmatched VMs with their hostname, IPs, and diagnostic reason
-- Unmatched devices
-- Suggested mapping override entries you can copy-paste
+The report contains:
+- **Unmatched VMs** — hostname, IPs, diagnostic reason (e.g., "VMware Tools not installed")
+- **Unmatched devices** — V1 devices with no corresponding VMware VM
+- **IP-only matches (review recommended)** — matches made by IP address only, which should be verified
+- **Suggested mapping overrides** — copy-pasteable JSON entries for `mapping-overrides.json`
 
-### 5. Add Manual Overrides (if needed)
+### 6. Add Manual Overrides (if needed)
 
 Edit `config/mapping-overrides.json`:
 
@@ -146,14 +170,22 @@ Edit `config/mapping-overrides.json`:
       "deviceId": "a1b2c3d4-e5f6-...",
       "deviceName": "WEBPROD01",
       "comment": "Different naming convention in VMware vs Vision One"
+    },
+    {
+      "vmId": "vm-999",
+      "vmName": "test-lab-box",
+      "deviceId": null,
+      "comment": "No V1 agent installed, suppress unmatched warning"
     }
   ]
 }
 ```
 
+Setting `"deviceId": null` suppresses the VM from matching and unmatched reports — useful for VMs that are known to have no Vision One agent.
+
 For multi-vCenter environments, use qualified VM IDs: `"vmId": "dc1-vcenter::vm-123"`
 
-### 6. Run For Real
+### 7. Run For Real
 
 ```bash
 # Single sync
@@ -372,10 +404,12 @@ The mapping override file (`config/mapping-overrides.json`) lets administrators 
 | Field | Required | Description |
 |-------|----------|-------------|
 | `vmId` | Yes | VMware VM MoRef ID (e.g., `vm-123` or `dc1-vcenter::vm-123`) |
-| `deviceId` | Yes | Vision One ASRM device ID (from `GET /v3.0/asrm/attackSurfaceDevices`) |
+| `deviceId` | Yes | Vision One ASRM device ID, or `null` to suppress the VM from matching/reports |
 | `vmName` | No | Human-readable VM name (documentation only) |
 | `deviceName` | No | Human-readable device name (documentation only) |
 | `comment` | No | Admin note explaining the override |
+
+**Suppressing unmatched warnings:** Set `"deviceId": null` for VMs that are known to have no Vision One agent (e.g., appliances, test VMs). These VMs are excluded from both matching and unmatched reports.
 
 ### Live Reload
 
@@ -647,14 +681,56 @@ Create an ECS task definition with:
 ### Initial Setup
 
 ```
-1. Deploy with DRY_RUN=true
-2. Run a single sync:  --once
-3. Review data/unmatched-report.txt
-4. Add overrides to config/mapping-overrides.json for mismatches
-5. Reload config: kill -HUP or systemctl reload
-6. Re-run with DRY_RUN=true to verify
-7. Set DRY_RUN=false
-8. Start continuous mode
+1. Pre-create Vision One custom tags (key/value) matching VMware categories/tags
+2. Deploy with DRY_RUN=true
+3. Run a single sync:  DRY_RUN=true LOG_LEVEL=debug node dist/index.js --once
+4. Review logs for matching decisions (hostname, IP, conflicts)
+5. Review data/unmatched-report.txt for unmatched VMs and devices
+6. Review "IP-ONLY MATCHES" section — confirm or convert to manual overrides
+7. Add overrides to config/mapping-overrides.json for mismatches
+8. Suppress known-unmatched VMs with "deviceId": null overrides
+9. Reload config: kill -HUP or systemctl reload
+10. Re-run with DRY_RUN=true to verify — check "Tag update planned" log entries
+11. Set DRY_RUN=false
+12. Run once for real: node dist/index.js --once
+13. Verify tags in Vision One console
+14. Start continuous mode
+```
+
+### Dry Run Mode
+
+Dry run (`DRY_RUN=true`) executes the **entire pipeline** — fetches data, matches VMs to devices, computes diffs — but intercepts all write operations:
+
+| Operation | Normal mode | Dry run mode |
+|-----------|-------------|--------------|
+| Fetch VMs from VMware | Executes | Executes |
+| Fetch devices from Vision One | Executes | Executes |
+| Match VMs to devices | Executes | Executes |
+| Compute tag diffs | Executes | Executes |
+| Write unmatched report | Executes | Executes |
+| Update device tags | **Executes** | **Logged only** |
+| Persist sync state | Executes | Executes |
+
+In dry run, each planned tag update is logged with:
+- Device ID and name
+- VM name
+- Tags to add and remove
+- Final tag count
+
+```bash
+# Quick dry run
+DRY_RUN=true node dist/index.js --once
+
+# Verbose dry run (see all matching decisions)
+DRY_RUN=true LOG_LEVEL=debug node dist/index.js --once
+
+# Docker
+docker run --rm -e DRY_RUN=true -e LOG_LEVEL=debug \
+  --env-file .env \
+  -v $(pwd)/config:/app/config:ro \
+  -v $(pwd)/data:/app/data \
+  vmwaretagging:latest \
+  node dist/index.js --once
 ```
 
 ### Ongoing Operations
@@ -663,11 +739,14 @@ Create an ECS task definition with:
 |------|---------|
 | View sync logs | `journalctl -u vmwaretagging -f` or `docker logs -f vmwaretagging` |
 | Check unmatched assets | `cat data/unmatched-report.txt` |
+| Audit matching decisions | Set `LOG_LEVEL=debug`, run `--once` |
 | Add a mapping override | Edit `config/mapping-overrides.json`, then reload |
+| Suppress a VM from reports | Add `"deviceId": null` override, then reload |
 | Change sync interval | Edit `config/default.json`, then reload |
 | Enable tag removal | Set `removeOrphanedTags: true` in config, then reload |
 | Force immediate sync | Restart the service (it syncs on startup) |
 | Troubleshoot | Set `LOG_LEVEL=debug`, restart |
+| Detect V1 tag drift | Automatic — live device state is checked every cycle |
 
 ## API Details
 

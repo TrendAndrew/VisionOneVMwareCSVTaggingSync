@@ -291,4 +291,111 @@ describe('DiffService', () => {
       expect(diffs[0].tagsToRemove).toEqual(['anyTag', 'anotherTag']);
     });
   });
+
+  describe('computeDiffs with live tag state (drift detection)', () => {
+    it('should detect drift when tag removed manually in V1', () => {
+      const svc = new DiffService(defaultConfig());
+      const desiredTags = ['env:prod', 'role:web'];
+      const hash = svc.computeTagHash(desiredTags);
+
+      const match = makeMatch('vm-1', 'ep-1');
+      // Sync state says both tags were applied
+      const syncState = new Map([['ep-1', makeSyncEntry('ep-1', desiredTags, hash)]]);
+      const desiredMap = new Map([['ep-1', desiredTags]]);
+      // But live device only has one tag (someone removed role:web manually)
+      const liveMap = new Map([['ep-1', ['env:prod']]]);
+
+      const diffs = svc.computeDiffs([match], syncState, new Set(), desiredMap, liveMap);
+
+      expect(diffs).toHaveLength(1);
+      expect(diffs[0].tagsToAdd).toEqual(['role:web']);
+      expect(diffs[0].tagsToRemove).toEqual([]);
+    });
+
+    it('should detect drift when managed tag still on device but no longer desired', () => {
+      const svc = new DiffService(defaultConfig({ removeOrphanedTags: true }));
+      const oldTags = ['env:prod', 'role:web'];
+      const oldHash = svc.computeTagHash(oldTags);
+      const newDesired = ['env:prod'];
+
+      const match = makeMatch('vm-1', 'ep-1');
+      // Sync state says we applied both tags
+      const syncState = new Map([['ep-1', makeSyncEntry('ep-1', oldTags, oldHash)]]);
+      const desiredMap = new Map([['ep-1', newDesired]]);
+      // Live device still has both (role:web is still present)
+      const liveMap = new Map([['ep-1', ['env:prod', 'role:web']]]);
+
+      const diffs = svc.computeDiffs([match], syncState, new Set(), desiredMap, liveMap);
+
+      expect(diffs).toHaveLength(1);
+      expect(diffs[0].tagsToAdd).toEqual([]);
+      expect(diffs[0].tagsToRemove).toEqual(['role:web']);
+    });
+
+    it('should skip device when live state matches desired even if sync state is stale', () => {
+      const svc = new DiffService(defaultConfig());
+      const desiredTags = ['env:prod', 'role:web'];
+      const hash = svc.computeTagHash(desiredTags);
+
+      const match = makeMatch('vm-1', 'ep-1');
+      // Sync state matches desired hash
+      const syncState = new Map([['ep-1', makeSyncEntry('ep-1', desiredTags, hash)]]);
+      const desiredMap = new Map([['ep-1', desiredTags]]);
+      // Live device also has the right tags
+      const liveMap = new Map([['ep-1', ['env:prod', 'role:web']]]);
+
+      const diffs = svc.computeDiffs([match], syncState, new Set(), desiredMap, liveMap);
+
+      expect(diffs).toEqual([]);
+    });
+
+    it('should not try to remove tags already gone from live device', () => {
+      const svc = new DiffService(defaultConfig({ removeOrphanedTags: true }));
+      const oldTags = ['env:prod', 'role:web'];
+      const oldHash = svc.computeTagHash(oldTags);
+      const newDesired = ['env:prod'];
+
+      const match = makeMatch('vm-1', 'ep-1');
+      // Sync state says we managed both tags
+      const syncState = new Map([['ep-1', makeSyncEntry('ep-1', oldTags, oldHash)]]);
+      const desiredMap = new Map([['ep-1', newDesired]]);
+      // But role:web is already gone from live device
+      const liveMap = new Map([['ep-1', ['env:prod']]]);
+
+      const diffs = svc.computeDiffs([match], syncState, new Set(), desiredMap, liveMap);
+
+      // Live state already matches desired -- no action needed
+      expect(diffs).toEqual([]);
+    });
+
+    it('should be backward compatible when liveTagNames not provided', () => {
+      const svc = new DiffService(defaultConfig());
+      const match = makeMatch('vm-1', 'ep-1');
+      const desiredMap = new Map([['ep-1', ['env:prod', 'role:web']]]);
+
+      // No liveMap passed -- should fall back to sync-state-only behavior
+      const diffs = svc.computeDiffs([match], new Map(), new Set(), desiredMap);
+
+      expect(diffs).toHaveLength(1);
+      expect(diffs[0].tagsToAdd).toEqual(['env:prod', 'role:web']);
+    });
+
+    it('should detect first sync with live tags present on device', () => {
+      const svc = new DiffService(defaultConfig());
+      const desiredTags = ['env:prod', 'role:web'];
+
+      const match = makeMatch('vm-1', 'ep-1');
+      // No sync state (first run)
+      const desiredMap = new Map([['ep-1', desiredTags]]);
+      // But device already has env:prod (perhaps added manually)
+      const liveMap = new Map([['ep-1', ['env:prod']]]);
+
+      const diffs = svc.computeDiffs([match], new Map(), new Set(), desiredMap, liveMap);
+
+      expect(diffs).toHaveLength(1);
+      // Only role:web needs to be added; env:prod is already there
+      expect(diffs[0].tagsToAdd).toEqual(['role:web']);
+      expect(diffs[0].tagsToRemove).toEqual([]);
+    });
+  });
 });

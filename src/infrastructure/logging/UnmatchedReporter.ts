@@ -93,7 +93,7 @@ export class UnmatchedReporter {
 
     await this.ensureDirectory();
     await this.writeJsonReport(report);
-    await this.writeTxtReport(report);
+    await this.writeTxtReport(report, matches);
 
     return report;
   }
@@ -155,7 +155,7 @@ export class UnmatchedReporter {
   /**
    * Write a human-readable TXT report with suggested mapping overrides.
    */
-  private async writeTxtReport(report: UnmatchedReport): Promise<void> {
+  private async writeTxtReport(report: UnmatchedReport, matches: DeviceMatch[] = []): Promise<void> {
     const txtPath = path.resolve(
       this.reportPath.replace('.json', '.txt')
     );
@@ -216,6 +216,25 @@ export class UnmatchedReporter {
       }
 
       lines.push('');
+    }
+
+    // IP-only matches (for review)
+    const ipOnlyMatches = matches.filter(m => m.matchedOn === 'ip');
+    if (ipOnlyMatches.length > 0) {
+      lines.push('-'.repeat(72));
+      lines.push('IP-ONLY MATCHES (review recommended)');
+      lines.push('-'.repeat(72));
+      lines.push('');
+      lines.push('These VMs were matched to devices by IP address only (no hostname');
+      lines.push('match). Consider adding manual overrides to confirm these mappings.');
+      lines.push('');
+
+      for (const m of ipOnlyMatches) {
+        lines.push(`  VM:     ${m.vmwareVm.name} (${m.vmwareVm.vmId})`);
+        lines.push(`  Device: ${m.visionOneDevice.deviceName} (${m.visionOneDevice.id})`);
+        lines.push(`  IPs:    ${m.vmwareVm.ipAddresses.join(', ')}`);
+        lines.push('');
+      }
     }
 
     // Suggest mapping overrides
