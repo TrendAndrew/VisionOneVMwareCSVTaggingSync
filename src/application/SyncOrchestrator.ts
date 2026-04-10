@@ -45,6 +45,15 @@ interface StepTiming {
   durationMs: number;
 }
 
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes === 0) return `${seconds}s`;
+  return `${minutes}m ${seconds}s`;
+}
+
 export class SyncOrchestrator {
   constructor(
     private readonly vmwareGateway: VmwareGateway,
@@ -83,7 +92,7 @@ export class SyncOrchestrator {
       const value = await fn();
       const elapsed = Date.now() - stepStart;
       timings.push({ step, durationMs: elapsed });
-      this.logger.info(`${step} completed`, { durationMs: elapsed });
+      this.logger.info(`${step} completed`, { duration: formatDuration(elapsed) });
       return value;
     };
 
@@ -119,7 +128,7 @@ export class SyncOrchestrator {
         deviceCount: devices.length,
         existingTagCount: existingTags.length,
         syncStateEntries: syncState.entries.size,
-        durationMs: fetchElapsed,
+        duration: formatDuration(fetchElapsed),
       });
 
       // Step 3: Apply mapping overrides first (highest priority)
@@ -165,7 +174,7 @@ export class SyncOrchestrator {
         overrideMatches: overrideMatches.length,
         autoMatches: autoMatches.length,
         totalMatches: allMatches.length,
-        durationMs: matchElapsed,
+        duration: formatDuration(matchElapsed),
       });
 
       // Step 5: Write unmatched report (exclude suppressed VMs)
@@ -263,7 +272,7 @@ export class SyncOrchestrator {
       const diffElapsed = Date.now() - diffStart;
       timings.push({ step: 'Compute diffs', durationMs: diffElapsed });
 
-      this.logger.info('Diffs computed', { diffCount: diffs.length, durationMs: diffElapsed });
+      this.logger.info('Diffs computed', { diffCount: diffs.length, duration: formatDuration(diffElapsed) });
 
       // Step 8: Apply tag updates via batch device update API
       await timeStep('Apply tag updates', async () => {
@@ -369,9 +378,9 @@ export class SyncOrchestrator {
     }
 
     // Final summary with step timings
-    const timingSummary: Record<string, number> = {};
+    const timingSummary: Record<string, string> = {};
     for (const t of timings) {
-      timingSummary[t.step] = t.durationMs;
+      timingSummary[t.step] = formatDuration(t.durationMs);
     }
 
     this.logger.info('Sync cycle complete', {
@@ -382,7 +391,7 @@ export class SyncOrchestrator {
       deviceUpdateErrors: result.deviceUpdateErrors,
       missingTags: result.missingTagCount,
       errors: result.errors.length,
-      totalDurationMs: result.durationMs,
+      totalDuration: formatDuration(result.durationMs),
       stepTimings: timingSummary,
     });
 
