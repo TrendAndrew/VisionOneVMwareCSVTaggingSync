@@ -13,6 +13,8 @@
  *  9. Persist updated sync state
  */
 
+import fs from 'fs/promises';
+import path from 'path';
 import { VmwareGateway } from '../domain/port/VmwareGateway';
 import { VisionOneGateway, DeviceTagUpdate } from '../domain/port/VisionOneGateway';
 import { SyncStateRepository } from '../domain/port/SyncStateRepository';
@@ -33,6 +35,7 @@ export interface SyncResult {
   tagsCreated: number;       // kept for backward compat but always 0
   devicesUpdated: number;
   deviceUpdateErrors: number;
+  missingTagCount: number;
   errors: string[];
   durationMs: number;
 }
@@ -64,6 +67,7 @@ export class SyncOrchestrator {
       tagsCreated: 0,
       devicesUpdated: 0,
       deviceUpdateErrors: 0,
+      missingTagCount: 0,
       errors: [],
       durationMs: 0,
     };
@@ -172,6 +176,7 @@ export class SyncOrchestrator {
 
       const desiredTagIdsByDeviceId = new Map<string, string[]>();
       const desiredTagNamesByDeviceId = new Map<string, string[]>();
+      const missingTags = new Set<string>();
       for (const match of allMatches) {
         const device = match.visionOneDevice;
         const tagIds: string[] = [];
@@ -184,15 +189,17 @@ export class SyncOrchestrator {
             tagIds.push(tagId);
             tagNames.push(`${vmTag.categoryName}/${vmTag.name}`);
           } else {
-            this.logger.warn(
-              `No Vision One tag found for VMware tag "${vmTag.categoryName}/${vmTag.name}" — ` +
-              'ensure the tag is pre-created in the Vision One console',
-              { category: vmTag.categoryName, tag: vmTag.name, deviceId: device.id }
-            );
+            missingTags.add(`${vmTag.categoryName}::${vmTag.name}`);
           }
         }
         desiredTagIdsByDeviceId.set(device.id, tagIds);
         desiredTagNamesByDeviceId.set(device.id, tagNames);
+      }
+
+      // Write missing tags to CSV for admin to pre-create in Vision One
+      result.missingTagCount = missingTags.size;
+      if (missingTags.size > 0) {
+        await this.writeMissingTagsCsv(missingTags);
       }
 
       // Step 7: Compute diffs against live device state
@@ -329,12 +336,19 @@ export class SyncOrchestrator {
       matched: result.matchedCount,
       unmatchedVms: result.unmatchedVmCount,
       unmatchedDevices: result.unmatchedDeviceCount,
-      tagsCreated: result.tagsCreated,
       devicesUpdated: result.devicesUpdated,
       deviceUpdateErrors: result.deviceUpdateErrors,
+      missingTags: result.missingTagCount,
       errors: result.errors.length,
       durationMs: result.durationMs,
     });
+
+    if (result.missingTagCount > 0) {
+      const csvPath = path.resolve('./data/missing-tags.csv');
+      this.logger.info(
+        `${result.missingTagCount} VMware tag(s) not found in Vision One — pre-create them from ${csvPath}`
+      );
+    }
 
     return result;
   }
@@ -447,5 +461,39 @@ export class SyncOrchestrator {
     }
 
     return { matches, suppressedVmIds };
+  }
+
+  /**
+   * Write deduplicated missing tags to a CSV file.
+   * Overwritten each run — the file shrinks to zero once all tags are
+   * pre-created in the Vision One console.
+   */
+  private async writeMissingTagsCsv(missingTags: Set<string>): Promise<void> {
+    const csvPath = path.resolve('./data/missing-tags.csv');
+    const dir = path.dirname(csvPath);
+
+    try {
+      await fs.mkdir(dir, { recursive: true });
+
+      const sorted = [...missingTags].sort();
+      const lines = ['key,value'];
+      for (const entry of sorted) {
+        const [category, ...valueParts] = entry.split('::');
+        const value = valueParts.join('::');
+        // CSV-escape fields that contain commas or quotes
+        const escKey = category.includes(',') || category.includes('"')
+          ? `"${category.replace(/"/g, '""')}"` : category;
+        const escVal = value.includes(',') || value.includes('"')
+          ? `"${value.replace(/"/g, '""')}"` : value;
+        lines.push(`${escKey},${escVal}`);
+      }
+
+      await fs.writeFile(csvPath, lines.join('\n') + '\n', 'utf-8');
+    } catch (err) {
+      this.logger.error(
+        `Failed to write missing tags CSV to ${csvPath}`,
+        err instanceof Error ? err : new Error(String(err))
+      );
+    }
   }
 }
