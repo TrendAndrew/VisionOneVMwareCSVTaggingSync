@@ -70,19 +70,28 @@ export class SyncOrchestrator {
 
     try {
       // Step 1: Connect to VMware
-      this.logger.info('Connecting to VMware vCenter');
+      this.logger.info('Connecting to VMware vCenter(s)');
       await this.vmwareGateway.connect();
 
-      // Step 2: Fetch data in parallel
-      this.logger.info('Fetching VMs, devices, tags, and sync state');
+      // Step 2: Fetch data in parallel (VMware + V1 + sync state concurrently)
+      this.logger.info('Fetching data from VMware and Vision One in parallel');
       const [vms, devices, existingTags, syncState] = await Promise.all([
         this.fetchVmsWithTags(),
-        this.visionOneGateway.listDevices(),
-        this.visionOneGateway.listCustomTags(),
-        this.syncStateRepo.load(),
+        this.visionOneGateway.listDevices().then((d) => {
+          this.logger.info('Vision One devices fetched', { deviceCount: d.length });
+          return d;
+        }),
+        this.visionOneGateway.listCustomTags().then((t) => {
+          this.logger.info('Vision One custom tags fetched', { tagCount: t.length });
+          return t;
+        }),
+        this.syncStateRepo.load().then((s) => {
+          this.logger.debug('Sync state loaded', { entries: s.entries.size });
+          return s;
+        }),
       ]);
 
-      this.logger.info('Data fetched', {
+      this.logger.info('All data fetched', {
         vmCount: vms.length,
         deviceCount: devices.length,
         existingTagCount: existingTags.length,
@@ -337,10 +346,20 @@ export class SyncOrchestrator {
    * tag association API to attach resolved tags to each VM.
    */
   private async fetchVmsWithTags(): Promise<VmwareVm[]> {
+    this.logger.debug('VMware: fetching VMs, categories, and tags in parallel');
     const [vms, categories, tags] = await Promise.all([
-      this.vmwareGateway.listVms(),
-      this.vmwareGateway.listCategories(),
-      this.vmwareGateway.listTags(),
+      this.vmwareGateway.listVms().then((v) => {
+        this.logger.info('VMware VMs fetched', { vmCount: v.length });
+        return v;
+      }),
+      this.vmwareGateway.listCategories().then((c) => {
+        this.logger.debug('VMware categories fetched', { categoryCount: c.length });
+        return c;
+      }),
+      this.vmwareGateway.listTags().then((t) => {
+        this.logger.debug('VMware tags fetched', { tagCount: t.length });
+        return t;
+      }),
     ]);
 
     // Build lookup maps for category and tag resolution
@@ -353,9 +372,11 @@ export class SyncOrchestrator {
     );
 
     // Fetch tag associations for all VMs
+    this.logger.debug('VMware: fetching tag associations', { vmCount: vms.length });
     const vmIds = vms.map((vm) => vm.vmId);
     const associations =
       await this.vmwareGateway.getTagAssociationsForVms(vmIds);
+    this.logger.debug('VMware tag associations fetched', { associationCount: associations.size });
 
     // Enrich each VM with its resolved tags
     for (const vm of vms) {
@@ -366,6 +387,11 @@ export class SyncOrchestrator {
       }));
     }
 
+    this.logger.info('VMware data complete', {
+      vmCount: vms.length,
+      categoryCount: categories.length,
+      tagCount: tags.length,
+    });
     return vms;
   }
 

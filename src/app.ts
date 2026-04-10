@@ -56,7 +56,8 @@ export function bootstrap(): AppContext {
     config.visionone.region,
     config.visionone.devicePageSize,
     config.visionone.requestTimeoutMs,
-    config.visionone.rateLimitDelayMs
+    config.visionone.rateLimitDelayMs,
+    logger
   );
 
   // Wrap with DryRunDecorator if configured

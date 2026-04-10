@@ -10,7 +10,7 @@ import { VisionOneDevice } from '../../domain/model/VisionOneEndpoint';
 import { VisionOneCustomTag } from '../../domain/model/VisionOneCustomTag';
 import { VisionOneRestClient } from './VisionOneRestClient';
 import { VisionOnePaginator } from './VisionOnePaginator';
-import { VisionOneApiError } from '../../shared/errors';
+import { Logger } from '../../domain/port/Logger';
 
 /** Raw device from GET /v3.0/asrm/attackSurfaceDevices */
 interface RawDevice {
@@ -37,14 +37,17 @@ interface UpdateResultItem {
 export class VisionOneGatewayImpl implements VisionOneGateway {
   private readonly client: VisionOneRestClient;
   private readonly paginator: VisionOnePaginator<RawDevice>;
+  private readonly logger?: Logger;
 
   constructor(
     apiToken: string,
     region: string,
     devicePageSize: number = 200,
     requestTimeoutMs: number = 30000,
-    rateLimitDelayMs: number = 100
+    rateLimitDelayMs: number = 100,
+    logger?: Logger
   ) {
+    this.logger = logger;
     this.client = new VisionOneRestClient(
       apiToken,
       region,
@@ -53,7 +56,10 @@ export class VisionOneGatewayImpl implements VisionOneGateway {
     );
     this.paginator = new VisionOnePaginator<RawDevice>(
       this.client,
-      devicePageSize
+      devicePageSize,
+      (itemsSoFar, pageNumber) => {
+        this.logger?.debug('Vision One: fetching devices', { page: pageNumber, devicesSoFar: itemsSoFar });
+      }
     );
   }
 
@@ -94,6 +100,8 @@ export class VisionOneGatewayImpl implements VisionOneGateway {
     if (updates.length === 0) {
       return [];
     }
+
+    this.logger?.info('Updating device tags via Vision One API', { deviceCount: updates.length });
 
     const body = updates.map((u) => ({
       id: u.deviceId,

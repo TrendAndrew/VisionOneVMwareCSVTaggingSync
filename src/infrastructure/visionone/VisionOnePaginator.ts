@@ -18,7 +18,8 @@ interface PaginatedResponse<T> {
 export class VisionOnePaginator<T> {
   constructor(
     private readonly client: VisionOneRestClient,
-    private readonly pageSize: number = 200
+    private readonly pageSize: number = 200,
+    private readonly onPageFetched?: (itemsSoFar: number, pageNumber: number) => void
   ) {}
 
   /**
@@ -33,6 +34,7 @@ export class VisionOnePaginator<T> {
     const allItems: T[] = [];
     let currentPath: string | null = path;
     let isFirstRequest = true;
+    let pageNumber = 0;
 
     while (currentPath) {
       const params: Record<string, unknown> = {};
@@ -42,6 +44,7 @@ export class VisionOnePaginator<T> {
         isFirstRequest = false;
       }
 
+      pageNumber++;
       const response = await this.client.get<PaginatedResponse<T>>(
         currentPath,
         Object.keys(params).length > 0 ? params : undefined
@@ -50,6 +53,8 @@ export class VisionOnePaginator<T> {
       if (response.items && Array.isArray(response.items)) {
         allItems.push(...response.items);
       }
+
+      this.onPageFetched?.(allItems.length, pageNumber);
 
       currentPath = this.resolveNextLink(response.nextLink);
     }

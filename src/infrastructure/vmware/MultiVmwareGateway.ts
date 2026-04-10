@@ -73,9 +73,12 @@ export class MultiVmwareGateway implements VmwareGateway {
   async listVms(): Promise<VmwareVm[]> {
     const allVms: VmwareVm[] = [];
 
+    this.logger.debug('Fetching VMs from all vCenters in parallel');
     const results = await Promise.allSettled(
       this.gateways.map(async ({ label, gateway }) => {
+        this.logger.debug(`Fetching VMs from vCenter: ${label}`);
         const vms = await gateway.listVms();
+        this.logger.debug(`VMs fetched from vCenter: ${label}`, { vmCount: vms.length });
         // Stamp each VM with its source and prefix vmId to avoid collisions
         return vms.map((vm) => ({
           ...vm,
