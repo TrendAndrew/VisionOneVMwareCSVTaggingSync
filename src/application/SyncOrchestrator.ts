@@ -40,6 +40,11 @@ export interface SyncResult {
   durationMs: number;
 }
 
+interface StepTiming {
+  step: string;
+  durationMs: number;
+}
+
 export class SyncOrchestrator {
   constructor(
     private readonly vmwareGateway: VmwareGateway,
@@ -60,6 +65,7 @@ export class SyncOrchestrator {
    */
   async execute(): Promise<SyncResult> {
     const start = Date.now();
+    const timings: StepTiming[] = [];
     const result: SyncResult = {
       matchedCount: 0,
       unmatchedVmCount: 0,
@@ -72,13 +78,24 @@ export class SyncOrchestrator {
       durationMs: 0,
     };
 
+    const timeStep = async <T>(step: string, fn: () => Promise<T>): Promise<T> => {
+      const stepStart = Date.now();
+      const value = await fn();
+      const elapsed = Date.now() - stepStart;
+      timings.push({ step, durationMs: elapsed });
+      this.logger.info(`${step} completed`, { durationMs: elapsed });
+      return value;
+    };
+
     try {
       // Step 1: Connect to VMware
-      this.logger.info('Connecting to VMware vCenter(s)');
-      await this.vmwareGateway.connect();
+      await timeStep('Connect to VMware', async () => {
+        await this.vmwareGateway.connect();
+      });
 
       // Step 2: Fetch data in parallel (VMware + V1 + sync state concurrently)
       this.logger.info('Fetching data from VMware and Vision One in parallel');
+      const fetchStart = Date.now();
       const [vms, devices, existingTags, syncState] = await Promise.all([
         this.fetchVmsWithTags(),
         this.visionOneGateway.listDevices().then((d) => {
@@ -94,12 +111,15 @@ export class SyncOrchestrator {
           return s;
         }),
       ]);
+      const fetchElapsed = Date.now() - fetchStart;
+      timings.push({ step: 'Fetch all data', durationMs: fetchElapsed });
 
       this.logger.info('All data fetched', {
         vmCount: vms.length,
         deviceCount: devices.length,
         existingTagCount: existingTags.length,
         syncStateEntries: syncState.entries.size,
+        durationMs: fetchElapsed,
       });
 
       // Step 3: Apply mapping overrides first (highest priority)
@@ -116,6 +136,7 @@ export class SyncOrchestrator {
       }
 
       // Step 4: Run automatic matching on remaining VMs and devices
+      const matchStart = Date.now();
       const overrideVmIds = new Set(
         overrideMatches.map((m) => m.vmwareVm.vmId)
       );
@@ -137,38 +158,44 @@ export class SyncOrchestrator {
       );
       const allMatches = [...overrideMatches, ...autoMatches];
       result.matchedCount = allMatches.length;
+      const matchElapsed = Date.now() - matchStart;
+      timings.push({ step: 'Match VMs to devices', durationMs: matchElapsed });
 
       this.logger.info('Matching complete', {
         overrideMatches: overrideMatches.length,
         autoMatches: autoMatches.length,
         totalMatches: allMatches.length,
+        durationMs: matchElapsed,
       });
 
       // Step 5: Write unmatched report (exclude suppressed VMs)
-      const vmsForReport = vms.filter(vm => !suppressedVmIds.has(vm.vmId));
-      const report = await this.unmatchedReporter.writeReport(
-        vmsForReport,
-        devices,
-        allMatches
-      );
-      result.unmatchedVmCount = report.unmatchedVms.length;
-      result.unmatchedDeviceCount = report.unmatchedDevices.length;
-
-      if (report.unmatchedVms.length > 0) {
-        this.logger.warn(
-          `${report.unmatchedVms.length} VMs unmatched -- see unmatched report`,
-          { count: report.unmatchedVms.length }
+      await timeStep('Write unmatched report', async () => {
+        const vmsForReport = vms.filter(vm => !suppressedVmIds.has(vm.vmId));
+        const report = await this.unmatchedReporter.writeReport(
+          vmsForReport,
+          devices,
+          allMatches
         );
-      }
+        result.unmatchedVmCount = report.unmatchedVms.length;
+        result.unmatchedDeviceCount = report.unmatchedDevices.length;
 
-      if (report.unmatchedDevices.length > 0) {
-        this.logger.warn(
-          `${report.unmatchedDevices.length} devices unmatched`,
-          { count: report.unmatchedDevices.length }
-        );
-      }
+        if (report.unmatchedVms.length > 0) {
+          this.logger.warn(
+            `${report.unmatchedVms.length} VMs unmatched -- see unmatched report`,
+            { count: report.unmatchedVms.length }
+          );
+        }
+
+        if (report.unmatchedDevices.length > 0) {
+          this.logger.warn(
+            `${report.unmatchedDevices.length} devices unmatched`,
+            { count: report.unmatchedDevices.length }
+          );
+        }
+      });
 
       // Step 6: Resolve VMware tags to Vision One tag IDs via key/value matching
+      const resolveStart = Date.now();
       const tagLookup = new Map<string, string>();
       for (const tag of existingTags) {
         tagLookup.set(`${tag.key}::${tag.value}`, tag.tagId);
@@ -201,8 +228,11 @@ export class SyncOrchestrator {
       if (missingTags.size > 0) {
         await this.writeMissingTagsCsv(missingTags);
       }
+      const resolveElapsed = Date.now() - resolveStart;
+      timings.push({ step: 'Resolve tags', durationMs: resolveElapsed });
 
       // Step 7: Compute diffs against live device state
+      const diffStart = Date.now();
       const existingTagNames = new Set<string>();
       for (const tag of existingTags) {
         existingTagNames.add(`${tag.key}/${tag.value}`);
@@ -230,92 +260,98 @@ export class SyncOrchestrator {
         desiredTagNamesByDeviceId,
         liveTagNamesByDeviceId
       );
+      const diffElapsed = Date.now() - diffStart;
+      timings.push({ step: 'Compute diffs', durationMs: diffElapsed });
 
-      this.logger.info('Diffs computed', { diffCount: diffs.length });
+      this.logger.info('Diffs computed', { diffCount: diffs.length, durationMs: diffElapsed });
 
       // Step 8: Apply tag updates via batch device update API
-      const updates: DeviceTagUpdate[] = [];
+      await timeStep('Apply tag updates', async () => {
+        const updates: DeviceTagUpdate[] = [];
 
-      for (const diff of diffs) {
-        const device = diff.deviceMatch.visionOneDevice;
+        for (const diff of diffs) {
+          const device = diff.deviceMatch.visionOneDevice;
 
-        // Start with current non-managed tag IDs (preserve tags we don't manage)
-        const currentTagIds = new Set(device.assetCustomTagIds);
+          // Start with current non-managed tag IDs (preserve tags we don't manage)
+          const currentTagIds = new Set(device.assetCustomTagIds);
 
-        // Remove tags that are in tagsToRemove
-        for (const tagName of diff.tagsToRemove) {
-          const parts = tagName.split('/');
-          if (parts.length >= 2) {
-            const lookupKey = `${parts[0]}::${parts.slice(1).join('/')}`;
-            const tagId = tagLookup.get(lookupKey);
-            if (tagId) currentTagIds.delete(tagId);
+          // Remove tags that are in tagsToRemove
+          for (const tagName of diff.tagsToRemove) {
+            const parts = tagName.split('/');
+            if (parts.length >= 2) {
+              const lookupKey = `${parts[0]}::${parts.slice(1).join('/')}`;
+              const tagId = tagLookup.get(lookupKey);
+              if (tagId) currentTagIds.delete(tagId);
+            }
           }
-        }
 
-        // Add tags that are in tagsToAdd
-        for (const tagName of diff.tagsToAdd) {
-          const parts = tagName.split('/');
-          if (parts.length >= 2) {
-            const lookupKey = `${parts[0]}::${parts.slice(1).join('/')}`;
-            const tagId = tagLookup.get(lookupKey);
-            if (tagId) currentTagIds.add(tagId);
+          // Add tags that are in tagsToAdd
+          for (const tagName of diff.tagsToAdd) {
+            const parts = tagName.split('/');
+            if (parts.length >= 2) {
+              const lookupKey = `${parts[0]}::${parts.slice(1).join('/')}`;
+              const tagId = tagLookup.get(lookupKey);
+              if (tagId) currentTagIds.add(tagId);
+            }
           }
-        }
 
-        const finalTagIds = [...currentTagIds];
+          const finalTagIds = [...currentTagIds];
 
-        if (finalTagIds.length > 20) {
-          this.logger.warn(`Device ${device.id} would exceed 20 tag limit, truncating`, {
+          if (finalTagIds.length > 20) {
+            this.logger.warn(`Device ${device.id} would exceed 20 tag limit, truncating`, {
+              deviceId: device.id,
+              tagCount: finalTagIds.length,
+            });
+            finalTagIds.length = 20;
+          }
+
+          // Log detailed diff for visibility (especially useful in dry-run mode)
+          this.logger.info('Tag update planned', {
             deviceId: device.id,
-            tagCount: finalTagIds.length,
+            deviceName: device.deviceName,
+            vmName: diff.deviceMatch.vmwareVm.name,
+            tagsToAdd: diff.tagsToAdd,
+            tagsToRemove: diff.tagsToRemove,
+            finalTagCount: finalTagIds.length,
           });
-          finalTagIds.length = 20;
+
+          updates.push({ deviceId: device.id, assetCustomTagIds: finalTagIds });
         }
 
-        // Log detailed diff for visibility (especially useful in dry-run mode)
-        this.logger.info('Tag update planned', {
-          deviceId: device.id,
-          deviceName: device.deviceName,
-          vmName: diff.deviceMatch.vmwareVm.name,
-          tagsToAdd: diff.tagsToAdd,
-          tagsToRemove: diff.tagsToRemove,
-          finalTagCount: finalTagIds.length,
-        });
-
-        updates.push({ deviceId: device.id, assetCustomTagIds: finalTagIds });
-      }
-
-      if (updates.length > 0) {
-        const results = await this.visionOneGateway.updateDeviceTags(updates);
-        for (const r of results) {
-          if (r.status === 204) {
-            result.devicesUpdated++;
-          } else {
-            result.deviceUpdateErrors++;
-            result.errors.push(r.error ?? `Device ${r.deviceId} update failed`);
+        if (updates.length > 0) {
+          const results = await this.visionOneGateway.updateDeviceTags(updates);
+          for (const r of results) {
+            if (r.status === 204) {
+              result.devicesUpdated++;
+            } else {
+              result.deviceUpdateErrors++;
+              result.errors.push(r.error ?? `Device ${r.deviceId} update failed`);
+            }
           }
         }
-      }
+      });
 
       // Step 9: Update sync state
-      const updatedEntries = new Map(syncState.entries);
-      for (const diff of diffs) {
-        const vm = diff.deviceMatch.vmwareVm;
-        const device = diff.deviceMatch.visionOneDevice;
-        const desiredTags = desiredTagNamesByDeviceId.get(device.id) ?? [];
+      await timeStep('Persist sync state', async () => {
+        const updatedEntries = new Map(syncState.entries);
+        for (const diff of diffs) {
+          const vm = diff.deviceMatch.vmwareVm;
+          const device = diff.deviceMatch.visionOneDevice;
+          const desiredTags = desiredTagNamesByDeviceId.get(device.id) ?? [];
 
-        updatedEntries.set(device.id, {
-          vmId: vm.vmId,
-          deviceId: device.id,
-          lastSyncedTags: desiredTags,
-          lastSyncTimestamp: new Date().toISOString(),
-          lastSyncHash: this.diffService.computeTagHash(desiredTags),
+          updatedEntries.set(device.id, {
+            vmId: vm.vmId,
+            deviceId: device.id,
+            lastSyncedTags: desiredTags,
+            lastSyncTimestamp: new Date().toISOString(),
+            lastSyncHash: this.diffService.computeTagHash(desiredTags),
+          });
+        }
+
+        await this.syncStateRepo.save({
+          entries: updatedEntries,
+          lastFullSyncTimestamp: new Date().toISOString(),
         });
-      }
-
-      await this.syncStateRepo.save({
-        entries: updatedEntries,
-        lastFullSyncTimestamp: new Date().toISOString(),
       });
     } catch (err) {
       this.logger.error(
@@ -332,6 +368,12 @@ export class SyncOrchestrator {
       result.durationMs = Date.now() - start;
     }
 
+    // Final summary with step timings
+    const timingSummary: Record<string, number> = {};
+    for (const t of timings) {
+      timingSummary[t.step] = t.durationMs;
+    }
+
     this.logger.info('Sync cycle complete', {
       matched: result.matchedCount,
       unmatchedVms: result.unmatchedVmCount,
@@ -340,7 +382,8 @@ export class SyncOrchestrator {
       deviceUpdateErrors: result.deviceUpdateErrors,
       missingTags: result.missingTagCount,
       errors: result.errors.length,
-      durationMs: result.durationMs,
+      totalDurationMs: result.durationMs,
+      stepTimings: timingSummary,
     });
 
     if (result.missingTagCount > 0) {
